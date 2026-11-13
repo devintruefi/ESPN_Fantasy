@@ -10,7 +10,7 @@ dependencies = [
     "mcp>=1.12,<2",
     "requests>=2.31",
     "tomli>=2.0; python_version < '3.11'",
-    "tzdata; sys_platform == 'win32'",
+    "tzdata",
 ]
 
 [project.optional-dependencies]

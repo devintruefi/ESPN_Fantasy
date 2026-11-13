@@ -57,8 +57,9 @@ once you trust it.
 
 ## Option A: hosted (works in Claude on web, desktop and phone)
 
-Deploy this repo to Vercel (or any host that runs Python ASGI apps). It
-serves MCP at `/mcp/<MCP_ACCESS_TOKEN>`.
+Import this repo in Vercel (vercel.com/new) and keep the **Python** preset;
+Vercel loads the `app` in `app.py`. Any host that runs Python ASGI apps also
+works (`uvicorn app:app`). It serves MCP at `/mcp/<MCP_ACCESS_TOKEN>`.
 
 Environment variables (Vercel → Project → Settings → Environment Variables):
 

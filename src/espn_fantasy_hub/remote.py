@@ -83,4 +83,4 @@ def create_app(token: str | None = None, hub=None):
     return app
 
 
-app = create_app() if os.environ.get("MCP_ACCESS_TOKEN") else None
+app = create_app()
