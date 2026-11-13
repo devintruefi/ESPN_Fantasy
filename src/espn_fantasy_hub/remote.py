@@ -64,12 +64,17 @@ def create_app(token: str | None = None, hub=None):
         if path in ("/", "/health", "/api/index"):
             await _send_json(send, 200, {"ok": True, "service": "espn-fantasy-hub", "mcp": "/mcp/<access token>"})
             return
+        if path.startswith("/.well-known/"):
+            await _send_json(send, 404, {"error": "Not found."})  # no OAuth here
+            return
         if not token or len(token) < 16:
             await _send_json(send, 503, {"error": "Server has no MCP_ACCESS_TOKEN configured; refusing requests."})
             return
         presented = _presented_token(scope)
         if not presented or not hmac.compare_digest(presented.encode(), token.encode()):
-            await _send_json(send, 401, {"error": "Missing or wrong access token."})
+            # 404 rather than 401: a 401 makes MCP clients (e.g. claude.ai) start
+            # an OAuth login flow, which this server doesn't use.
+            await _send_json(send, 404, {"error": "Not found."})
             return
         manager = StreamableHTTPSessionManager(app=mcp._mcp_server, event_store=None, json_response=True, stateless=True)
         async with manager.run():

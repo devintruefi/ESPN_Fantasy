@@ -34,8 +34,9 @@ INIT = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "
 def test_auth_required(football_hub):
     app = create_app(TOKEN, football_hub)
     assert call(app, "/health").status_code == 200
-    assert call(app, "/mcp", INIT).status_code == 401
-    assert call(app, "/mcp/wrong-token-0123456789", INIT).status_code == 401
+    assert call(app, "/mcp", INIT).status_code == 404
+    assert call(app, "/mcp/wrong-token-0123456789", INIT).status_code == 404
+    assert call(app, "/.well-known/oauth-protected-resource").status_code == 404
     assert call(create_app("", football_hub), f"/mcp/{TOKEN}", INIT).status_code == 503
 
 
