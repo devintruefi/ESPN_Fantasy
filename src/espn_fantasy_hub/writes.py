@@ -227,6 +227,15 @@ def plan_lineup(
     for sid, cap in capacity.items():
         if sport.is_starting_slot(sid) and len(occupants(sid)) > cap:
             raise MoveError(f"Too many players in {sport.slot(sid)} ({len(occupants(sid))}/{cap}).")
+    ir_cap = capacity.get(sport.ir_slot, 0)
+    in_ir = occupants(sport.ir_slot)
+    if len(in_ir) > ir_cap:
+        names = ", ".join(player_of(by_id[p]).get("fullName", "?") for p in in_ir if original.get(p) == sport.ir_slot)
+        raise MoveError(
+            f"The IR slot is full ({ir_cap} spot{'s' if ir_cap != 1 else ''}"
+            + (f", used by {names}" if names else "")
+            + "). Move someone out of IR in the same request."
+        )
 
     result, steps = [], []
     for pid, new in slot_of.items():

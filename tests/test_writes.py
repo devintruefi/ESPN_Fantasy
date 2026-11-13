@@ -135,3 +135,21 @@ def test_post_transaction_errors(monkeypatch):
     url, kw = sess.calls[0]
     assert url.startswith("https://lm-api-writes.fantasy.espn.com/apis/v3/games/ffl/seasons/2026/")
     assert kw["allow_redirects"] is False and kw["headers"]["x-fantasy-platform"] == "espn-fantasy-web"
+
+
+def test_ir_capacity_enforced(football_hub):
+    view = football_hub.view(football_hub.handles()[0])
+    entries = view.roster_entries(1)  # IR has 2 spots, both used (Monangai, Harvey)
+    with pytest.raises(writes.MoveError, match="IR slot is full"):
+        writes.plan_lineup(view, entries, moves={"Tank Dell": "IR"})
+    # Swapping someone out of IR at the same time is fine.
+    plan, steps, _ = writes.plan_lineup(view, entries, moves={"Tank Dell": "IR", "RJ Harvey": "BE"})
+    assert len(plan) == 2
+
+
+def test_slot_swap_between_starters(football_hub):
+    view = football_hub.view(football_hub.handles()[0])
+    entries = view.roster_entries(1)
+    plan, steps, warnings = writes.plan_lineup(view, entries, moves={"Zach Charbonnet": "RB", "Bijan Robinson": "FLEX"})
+    assert sorted(steps) == ["Bijan Robinson: RB → FLEX", "Zach Charbonnet: FLEX → RB"]
+    assert not any("empty" in w for w in warnings)
