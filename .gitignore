@@ -6,3 +6,5 @@ dist/
 config.toml
 .env
 .vercel/
+.vercel
+.env*
