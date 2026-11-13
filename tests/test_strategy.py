@@ -61,3 +61,18 @@ def test_trade_analyzer_categories(basketball_hub, basketball_data):
     name = partner["roster"]["entries"][0]["playerPoolEntry"]["player"]["fullName"]
     out = basketball_hub.trade_analyzer(give=["James Harden"], receive=[name])
     assert set(out["your_category_change_per_game"]) <= {"FT%", "REB", "PTS", "BLK", "3PM", "STL", "AST", "FG%"}
+
+
+def test_text_valued_stats_dont_crash():
+    # ESPN sometimes sends stats like minutes as "34:12" strings.
+    from espn_fantasy_hub.strategy import _period_raw, _cat_values
+    side = {
+        "rosterForMatchupPeriod": {"entries": [
+            {"playerPoolEntry": {"player": {"stats": [
+                {"id": "05null", "statSourceId": 0, "statSplitTypeId": 5, "scoringPeriodId": 0,
+                 "stats": {"0": 20.0, "40": "34:12", "13": 8}}]}}},
+        ]},
+        "cumulativeScore": {"scoreByStat": {"0": {"score": "20"}, "40": {"score": "34:12"}}},
+    }
+    assert _period_raw(side) == {"0": 20.0, "40": 0.0, "13": 8.0}
+    assert _cat_values(side) == {"0": 20.0}

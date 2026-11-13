@@ -66,6 +66,19 @@ def rnd(x, n: int = 1):
     return int(v) if v == int(v) and n <= 1 and abs(v) < 1e15 else v
 
 
+def num(value) -> float | None:
+    """ESPN occasionally sends stats as text (e.g. minutes as "34:12");
+    return a float, or None when the value isn't numeric."""
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def compact(d: dict) -> dict:
     """Drop keys whose value is None / empty so outputs stay small."""
     return {k: v for k, v in d.items() if v not in (None, "", [], {})}

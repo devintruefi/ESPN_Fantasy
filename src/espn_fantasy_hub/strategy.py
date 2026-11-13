@@ -14,6 +14,7 @@ from .views import (
     LeagueView,
     compact,
     find_split,
+    num,
     player_of,
     ppe_of,
     rnd,
@@ -125,9 +126,9 @@ def _completed_periods(view: LeagueView) -> dict[int, list[dict]]:
 
 def _cat_values(side: dict) -> dict[str, float]:
     return {
-        k: v.get("score")
+        k: num(v.get("score"))
         for k, v in ((side.get("cumulativeScore") or {}).get("scoreByStat") or {}).items()
-        if isinstance(v, dict) and v.get("score") is not None
+        if isinstance(v, dict) and num(v.get("score")) is not None
     }
 
 
@@ -238,14 +239,14 @@ def category_report(view: LeagueView, team_id: int, matchup_raw: dict | None = N
         tid: {str(k): v for k, v in (t.get("valuesByStat") or {}).items()}
         for tid, t in view.teams.items()
     }
-    games = {tid: (vals.get("42") or 0) for tid, vals in totals.items()}  # GP if ESPN provides it
+    games = {tid: (num(vals.get("42")) or 0) for tid, vals in totals.items()}  # GP if ESPN provides it
     table = []
     for c in cats:
         k = str(c["id"])
         pct = c["name"] in PCT_STATS
 
         def metric(tid):
-            v = totals[tid].get(k)
+            v = num(totals[tid].get(k))
             if v is None:
                 return None
             if pct or not games.get(tid):
@@ -386,7 +387,7 @@ def _bball_totals(view: LeagueView, wraps: Iterable[dict], top_n: int) -> dict[s
         avg = (s or {}).get("averageStats") or {}
         for k, v in avg.items():
             name = view.sport.stat(k)
-            sums[name] = sums.get(name, 0.0) + (v or 0.0)
+            sums[name] = sums.get(name, 0.0) + (num(v) or 0.0)
     out = {}
     for c in view.categories:
         name = c["name"]
@@ -463,8 +464,8 @@ RATIO_PARTS = {"FG%": ("FGM", "FGA"), "FT%": ("FTM", "FTA"), "3PT%": ("3PM", "3P
 def _season_avgs(view: LeagueView, wrap: dict) -> dict[str, float]:
     s = find_split(player_of(wrap), 0, 0, view.season) or {}
     avg = s.get("averageStats") or {}
-    out = {view.sport.stat(k): (v or 0.0) for k, v in avg.items()}
-    out["_fpts"] = s.get("appliedAverage") or 0.0
+    out = {view.sport.stat(k): (num(v) or 0.0) for k, v in avg.items()}
+    out["_fpts"] = num(s.get("appliedAverage")) or 0.0
     return out
 
 
@@ -476,7 +477,7 @@ def _period_raw(side: dict) -> dict[str, float]:
     for e in (side.get("rosterForMatchupPeriod") or {}).get("entries") or []:
         split = matchup_total_split(player_of(e)) or {}
         for k, v in (split.get("stats") or {}).items():
-            totals[k] = totals.get(k, 0.0) + (v or 0.0)
+            totals[k] = totals.get(k, 0.0) + (num(v) or 0.0)
     return totals
 
 
