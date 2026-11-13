@@ -62,10 +62,41 @@ def _player_state(view: LeagueView, entry: dict, period: int) -> dict:
         "has_game": game is not None,
         "game": game_label,
         "start": game["start"] if game else None,
-        "locked": bool(ppe.get("lineupLocked")) or started,
+        # ESPN's lineupLocked describes the current scoring period; for a future
+        # day only that day's game start matters.
+        "locked": started or (bool(ppe.get("lineupLocked")) and period <= view.scoring_period),
         "value": value,
         "value_label": value_label,
     }
+
+
+def pickup_options(view: LeagueView, pool: list[dict], slot_id: int, period: int, limit: int = 3) -> list[dict]:
+    """Best available players eligible for slot_id who play in `period` and haven't started."""
+    options = []
+    for w in pool:
+        if ppe_of(w).get("onTeamId"):
+            continue
+        st = _player_state(view, w, period)
+        if (
+            slot_id not in st["eligible"]
+            or not st["has_game"]
+            or st["locked"]
+            or st["injury"] in OUT_STATUSES
+            or st["injury"] == "DOUBTFUL"
+        ):
+            continue
+        options.append(st | {"status": ppe_of(w).get("status")})
+    options.sort(key=lambda s: (s["value"] is not None, s["value"] or 0), reverse=True)
+    out = []
+    for s in options[:limit]:
+        out.append(compact({
+            "name": s["name"],
+            "game": s["game"],
+            "value": rnd(s["value"], 2 if s["value_label"].endswith("rater") else 1),
+            "injury": s["injury"],
+            "on_waivers": True if s["status"] == "WAIVERS" else None,
+        }))
+    return out
 
 
 def _brief(s: dict) -> dict:
@@ -81,7 +112,10 @@ def _brief(s: dict) -> dict:
     )
 
 
-def lineup_check(view: LeagueView, team_id: int, entries: list[dict], period: int) -> dict:
+IR_ELIGIBLE = {"OUT", "INJURY_RESERVE", "SUSPENSION"}
+
+
+def lineup_check(view: LeagueView, team_id: int, entries: list[dict], period: int, day_word: str = "today") -> dict:
     sport = view.sport
     states = [_player_state(view, e, period) for e in entries]
     starters = [s for s in states if sport.is_starting_slot(s["slot_id"])]
@@ -120,7 +154,7 @@ def lineup_check(view: LeagueView, team_id: int, entries: list[dict], period: in
         if s["injury"] in OUT_STATUSES:
             problems.append((0, s, f"{s['name']} is {s['injury']}"))
         elif not s["has_game"]:
-            when = "this week (BYE)" if s["game"] == "BYE" else ("this week" if view.is_football else "today")
+            when = "this week (BYE)" if s["game"] == "BYE" else ("this week" if view.is_football else day_word)
             problems.append((0, s, f"{s['name']} has no game {when}"))
         elif s["injury"] == "DOUBTFUL":
             problems.append((1, s, f"{s['name']} is DOUBTFUL"))
@@ -145,6 +179,7 @@ def lineup_check(view: LeagueView, team_id: int, entries: list[dict], period: in
                 moves.append({"start": alt["name"], "bench": s["name"], "slot": s["slot"], "reason": text})
             else:
                 issue["fix"] = "No eligible healthy bench player with a game — consider a free agent pickup."
+                issue["_needs_pickup_slot"] = s["slot_id"]
         issues.append(issue)
 
     # 2. Empty starting slots.
@@ -163,6 +198,7 @@ def lineup_check(view: LeagueView, team_id: int, entries: list[dict], period: in
                 moves.append({"start": alt["name"], "slot": sport.slot(slot_id), "reason": "empty slot"})
             else:
                 issue["fix"] = "Nobody eligible on the bench — pick up a free agent."
+                issue["_needs_pickup_slot"] = slot_id
             issues.append(issue)
 
     # 3. Upgrades: healthy bench players projected well above a starter.
@@ -208,6 +244,20 @@ def lineup_check(view: LeagueView, team_id: int, entries: list[dict], period: in
                 }
             )
 
+    # 4b. Open IR slot while injured players take up bench spots.
+    ir_open = view.slot_counts.get(sport.ir_slot, 0) - len(ir)
+    if ir_open > 0:
+        movable = [b for b in bench if b["injury"] in IR_ELIGIBLE and not b["locked"]]
+        for b in movable[:ir_open]:
+            issues.append(
+                {
+                    "level": "tip",
+                    "slot": "IR",
+                    "problem": f"Your IR slot is open and {b['name']} ({b['injury']}) is using a bench spot",
+                    "fix": f"Move {b['name']} to IR to free a roster spot for a pickup.",
+                }
+            )
+
     # 5. Basketball: bench players with games while starters sit idle.
     idle_bench_with_games = []
     if not view.is_football:
@@ -216,7 +266,7 @@ def lineup_check(view: LeagueView, team_id: int, entries: list[dict], period: in
             if b["has_game"] and b["injury"] not in OUT_STATUSES and b["id"] not in used_bench
         ]
 
-    order = {"critical": 0, "warning": 1, "watch": 2, "upgrade": 3}
+    order = {"critical": 0, "warning": 1, "watch": 2, "upgrade": 3, "tip": 4}
     issues.sort(key=lambda i: order.get(i["level"], 9))
     out = {
         "team": view.team_label(team_id),
@@ -235,5 +285,8 @@ def lineup_check(view: LeagueView, team_id: int, entries: list[dict], period: in
         out["ir"] = [_brief(s) for s in ir]
     if idle_bench_with_games:
         out["bench_players_with_games_not_starting"] = idle_bench_with_games
+    pickups = view.adds_status(team_id)
+    if pickups:
+        out["pickups"] = pickups
     # Keep these keys even when empty so the shape is always the same.
     return compact(out) | {"lineup_ok": out["lineup_ok"], "issues": issues, "suggested_moves": moves}

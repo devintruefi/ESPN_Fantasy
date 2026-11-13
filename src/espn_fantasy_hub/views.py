@@ -394,7 +394,7 @@ class LeagueView:
                 "process_days": acq.get("waiverProcessDays"),
                 "process_hour": acq.get("waiverProcessHour"),
                 "season_acquisition_limit": None if (acq.get("acquisitionLimit") in (None, -1)) else acq.get("acquisitionLimit"),
-                "matchup_acquisition_limit": acq.get("matchupAcquisitionLimit") or None,
+                "add_limit": self._add_limit_text(),
             }
         )
         deadline = ms_to_dt(trade.get("deadlineDate"), self.tz)
@@ -418,6 +418,30 @@ class LeagueView:
         if lock:
             out["roster"]["lineup_lock"] = lock
         return compact(out)
+
+    def add_limit(self) -> tuple[int | None, str]:
+        """(limit, 'day'|'matchup') for pickups, or (None, '') when unlimited."""
+        acq = self.settings.get("acquisitionSettings") or {}
+        limit = acq.get("matchupAcquisitionLimit")
+        if limit is None or limit <= 0:
+            return None, ""
+        return int(limit), ("day" if acq.get("matchupLimitPerScoringPeriod") else "matchup")
+
+    def _add_limit_text(self) -> str | None:
+        limit, per = self.add_limit()
+        return f"{limit} pickup(s) per {per}" if limit else None
+
+    def adds_status(self, team_id) -> dict | None:
+        """Pickups used this matchup vs the league limit."""
+        limit, per = self.add_limit()
+        totals = ((self.teams.get(team_id) or {}).get("transactionCounter") or {}).get("matchupAcquisitionTotals") or {}
+        used = totals.get(str(self.current_matchup_period), 0)
+        if not limit:
+            return {"pickups_this_matchup": used} if used else None
+        out = {"limit": f"{limit} per {per}", "pickups_this_matchup": used}
+        if per == "matchup":
+            out["pickups_left_this_matchup"] = max(0, limit - used)
+        return out
 
     def _football_summary(self, scoring: dict) -> str:
         pts = {i.get("statId"): (i.get("points") or 0) for i in scoring.get("scoringItems") or []}
@@ -703,6 +727,7 @@ class LeagueView:
                 "points_for": None if self.is_categories else rnd(self.record(team_id).get("pointsFor")),
                 "faab_left": (self.faab_budget - (counter.get("acquisitionBudgetSpent") or 0)) if self.uses_faab else None,
                 "waiver_priority": t.get("waiverRank") or None,
+                "pickups": self.adds_status(team_id),
                 "on_trade_block": self.trade_block(team_id) or None,
             }
         )

@@ -167,6 +167,7 @@ def plan_lineup(
     start: list[str] | None = None,
     bench: list[str] | None = None,
     moves: dict[str, str] | None = None,
+    future: bool = False,
 ) -> tuple[list[tuple[int, int, int]], list[str], list[str]]:
     """Work out the ESPN slot moves for 'start these, bench those'.
 
@@ -181,7 +182,7 @@ def plan_lineup(
 
     def check_movable(e):
         p = player_of(e)
-        if ppe_of(e).get("lineupLocked"):
+        if ppe_of(e).get("lineupLocked") and not future:
             raise MoveError(f"{p.get('fullName')} is locked (his game has started), so he can't be moved now.")
 
     def occupants(sid):

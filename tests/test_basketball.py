@@ -75,6 +75,8 @@ def _in_season_hub(data, day: dt.date):
     for t in data["core"]["teams"]:
         for e in t["roster"]["entries"]:
             e["playerPoolEntry"]["lineupLocked"] = False
+    for w in data["pool"]["players"]:  # fixture is from the season's last day: all locked
+        w["lineupLocked"] = False
     now = dt.datetime.combine(day, dt.time(17, 0), tzinfo=dt.timezone.utc)  # noon US Eastern
     cfg = LeagueConfig(sport="basketball", league_id=1631984064, season=2023, team_id=1)
     return make_hub([(cfg, data)], now), period
@@ -124,3 +126,26 @@ def test_matchup_total_split_prefers_null_tagged():
     ]}
     assert matchup_total_split(player)["stats"]["0"] == 42
     assert matchup_total_split({"stats": [{"id": "01null", "statSourceId": 0, "statSplitTypeId": 1, "scoringPeriodId": 0}]})
+
+
+def test_tomorrow_wording_and_limits(basketball_data):
+    hub, period = _in_season_hub(basketball_data, dt.date(2023, 1, 10))
+    out = hub.lineup_check(days_ahead=1)
+    assert all("today" not in i["problem"] for i in out["issues"])
+    assert any("tomorrow" in i["problem"] for i in out["issues"] if "no game" in i["problem"]) or not any(
+        "no game" in i["problem"] for i in out["issues"])
+    s = hub.league_settings()
+    assert s["waivers_and_free_agents"]["add_limit"] == "1 pickup(s) per day"
+    assert out["pickups"]["limit"] == "1 per day"
+
+
+def test_daily_pickup_options_play_that_day(basketball_data):
+    hub, period = _in_season_hub(basketball_data, dt.date(2023, 1, 10))
+    out = hub.lineup_check()
+    with_options = 0
+    for issue in out["issues"]:
+        assert "_needs_pickup_slot" not in issue
+        for o in issue.get("free_agent_options", []):
+            assert o["game"] != "no game"
+        with_options += bool(issue.get("free_agent_options"))
+    assert with_options >= 1

@@ -240,3 +240,33 @@ def test_league_resolution(football_data, basketball_data):
         hub.resolve("football")  # ambiguous sport
     assert hub.resolve("work league").cfg.league_id == 42
     assert hub.resolve("1086064").cfg.league_id == 1086064
+
+
+def test_lineup_open_ir_slot_tip(football_data):
+    # Move an injured IR player to the bench: IR slot opens up, he wastes a bench spot.
+    entry_named(football_data, "RJ Harvey")["lineupSlotId"] = 20
+    out = hub_for(football_data).lineup_check()
+    tips = [i for i in out["issues"] if i["level"] == "tip"]
+    assert tips and "RJ Harvey" in tips[0]["fix"] and "IR" in tips[0]["fix"]
+    assert out["lineup_ok"] is True  # a tip isn't a problem
+
+
+def test_lineup_bye_hole_gets_free_agent_options(football_data):
+    bye_team = next(
+        t["id"] for t in football_data["pro_schedule"]["settings"]["proTeams"]
+        if t["id"] and t.get("byeWeek") == 10
+    )
+    player_of(entry_named(football_data, "Tyler Bass"))["proTeamId"] = bye_team
+    out = hub_for(football_data).lineup_check()
+    crit = next(i for i in out["issues"] if "has no game" in i["problem"])
+    assert "_needs_pickup_slot" not in crit
+    opts = crit["free_agent_options"]
+    assert opts and all(o["game"] != "BYE" and o["game"] != "no game" for o in opts)
+    values = [o.get("value", 0) for o in opts]
+    assert values == sorted(values, reverse=True)
+
+
+def test_pickups_status_shown(football_hub):
+    team = football_hub.roster()["team"]
+    assert team["pickups"]["pickups_this_matchup"] >= 0
+    assert "add_limit" not in football_hub.league_settings()["waivers_and_free_agents"]  # unlimited league

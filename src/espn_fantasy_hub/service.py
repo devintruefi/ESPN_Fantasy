@@ -248,7 +248,9 @@ class Hub:
             if m:
                 me, opp, _ = view._side(m, tid)
                 card["current_matchup"] = {"you": view._side_summary(me), "opponent": view._side_summary(opp)}
-            check = analysis.lineup_check(view, tid, view.roster_entries(tid), view.scoring_period)
+            check = analysis.lineup_check(view, tid, sorted(view.roster_entries(tid), key=view.slot_order), view.scoring_period)
+            for i in check["issues"]:
+                i.pop("_needs_pickup_slot", None)
             alerts = [i for i in check["issues"] if i["level"] in ("critical", "warning", "watch")]
             card["lineup_alerts"] = [f"[{i['level']}] {i['problem']}" for i in alerts] or ["none"]
         return card
@@ -559,7 +561,25 @@ class Hub:
             period = view.scoring_period + int(days_ahead)
             entries = view.roster_entries(tid, h.client.roster_for_period(period))
         entries = sorted(entries, key=view.slot_order)
-        return self._header(h, view) | analysis.lineup_check(view, tid, entries, period)
+        day_word = "today" if not days_ahead else ("tomorrow" if int(days_ahead) == 1 else f"on {view.pro.period_date.get(period, 'that day')}")
+        out = analysis.lineup_check(view, tid, entries, period, day_word)
+        self._add_pickup_options(h, view, out["issues"], period)
+        return self._header(h, view) | out
+
+    def _add_pickup_options(self, h: LeagueHandle, view: LeagueView, issues: list[dict], period: int) -> None:
+        """For holes the bench can't fill, suggest free agents who play then."""
+        needs = [i for i in issues if "_needs_pickup_slot" in i]
+        if not needs:
+            return
+        try:
+            pool = h.client.player_pool(period, limit=150).get("players") or []
+        except EspnError:
+            pool = []
+        for issue in needs:
+            slot_id = issue.pop("_needs_pickup_slot")
+            options = analysis.pickup_options(view, pool, slot_id, period) if pool else []
+            if options:
+                issue["free_agent_options"] = options
 
     def transactions(self, league=None, periods_back: int | None = None) -> dict:
         h = self.resolve(league)
@@ -689,7 +709,7 @@ class Hub:
             period += int(days_ahead)
             entries = view.roster_entries(me, h.client.roster_for_period(period))
         try:
-            plan, steps, warnings = writes.plan_lineup(view, entries, start, bench, moves)
+            plan, steps, warnings = writes.plan_lineup(view, entries, start, bench, moves, future=period > view.scoring_period)
         except writes.MoveError as e:
             raise UserError(str(e)) from None
         when = f"Week {period}" if view.is_football else str(view.pro.period_date.get(period, f"scoring period {period}"))

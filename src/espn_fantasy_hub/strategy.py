@@ -269,15 +269,19 @@ def category_report(view: LeagueView, team_id: int, matchup_raw: dict | None = N
         )
     table = [compact(r) for r in table]
     n = len(view.teams)
-    strengths = [r["cat"] for r in table if r["rank"] <= max(2, n // 4)]
-    weaknesses = [r["cat"] for r in table if r["rank"] > n - max(2, n // 4)]
+    third = max(1, n // 3)
+    strengths = [r["cat"] for r in table if r["rank"] <= third]
+    weaknesses = [r["cat"] for r in table if r["rank"] > n - third]
+    by_rank = sorted(table, key=lambda r: r["rank"], reverse=True)
     out: dict[str, Any] = {
         "team": view.team_label(team_id),
         "basis": "season totals per game played" if any(games.values()) else "season totals",
         "categories": table,
         "strengths": strengths,
         "weaknesses": weaknesses,
-        "punt_candidates": weaknesses[:2] if len(weaknesses) >= 2 else weaknesses,
+        "your_weakest_categories": [f"{r['cat']} (#{r['rank']})" for r in by_rank[:3]],
+        "punt_candidates": weaknesses[:2],
+        "how_to_read": f"rank 1 = best of {n}. Strengths = top third, weaknesses = bottom third.",
     }
     if matchup_raw:
         m = view.find_matchup(matchup_raw, view.current_matchup_period, team_id)
@@ -317,6 +321,10 @@ def waiver_upgrades(view: LeagueView, team_id: int, pool: list[dict], top: int =
 
     def describe(w):
         p = player_of(w)
+        week_game = None
+        if view.is_football:
+            g = view.pro.game(p.get("proTeamId"), view.scoring_period)
+            week_game = view.pro.matchup_label(g) if g else "BYE"
         return compact({
             "name": p.get("fullName"),
             "pos": view.sport.position(p),
@@ -326,6 +334,7 @@ def waiver_upgrades(view: LeagueView, team_id: int, pool: list[dict], top: int =
             "recent": rnd(recent_value(view, w), 2),
             "status": {"WAIVERS": "waivers", "FREEAGENT": "free agent"}.get(ppe_of(w).get("status")),
             "games_next_7": view.bball_games(p.get("proTeamId")).get("next_7_days") if not view.is_football else None,
+            "this_week": week_game,
         })
 
     healthy_pool = [w for w in pool if view._injury(w, player_of(w)) not in OUT_STATUSES and not ppe_of(w).get("onTeamId")]
