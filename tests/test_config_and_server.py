@@ -92,3 +92,11 @@ def test_server_tools(football_hub):
     with pytest.raises(ToolError) as e:
         asyncio.run(mcp.call_tool("team_roster", {"team": "nobody"}))
     assert "No team matches" in str(e.value)
+
+
+def test_prompts(football_hub):
+    mcp = build_server(football_hub)
+    prompts = {p.name for p in asyncio.run(mcp.list_prompts())}
+    assert {"daily_checkin", "waiver_plan", "trade_ideas", "matchup_gameplan", "season_outlook"} <= prompts
+    res = asyncio.run(mcp.get_prompt("waiver_plan", {"league": "Quorum"}))
+    assert "Quorum" in res.messages[0].content.text

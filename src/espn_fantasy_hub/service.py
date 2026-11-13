@@ -622,6 +622,13 @@ class Hub:
             raw = h.client.scoreboard(view.current_matchup_period, view.scoring_period)
         return self._header(h, view) | strategy.category_report(view, tid, raw)
 
+    def matchup_projection(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        tid = self._team(view, team)
+        raw = h.client.scoreboard(view.current_matchup_period, view.scoring_period)
+        return self._header(h, view) | {"period": view.period_label()} | strategy.matchup_projection(view, raw, tid)
+
     def waiver_upgrades(self, league=None, team=None) -> dict:
         h = self.resolve(league)
         view = self.view(h, ratings=True)

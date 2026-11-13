@@ -450,3 +450,165 @@ def trade_analysis(view: LeagueView, my_id: int, partner_id: int, give: list[dic
         f"({d_me:+.1f}); theirs {'improves' if d_them > 0 else 'gets worse' if d_them < 0 else 'is unchanged'} ({d_them:+.1f})."
     )
     return out
+
+
+# --------------------------------------------------------------------------
+# matchup projection
+# --------------------------------------------------------------------------
+
+RAW = {"FGM": "13", "FGA": "14", "FTM": "15", "FTA": "16", "3PM": "17", "3PA": "18"}
+RATIO_PARTS = {"FG%": ("FGM", "FGA"), "FT%": ("FTM", "FTA"), "3PT%": ("3PM", "3PA")}
+
+
+def _season_avgs(view: LeagueView, wrap: dict) -> dict[str, float]:
+    s = find_split(player_of(wrap), 0, 0, view.season) or {}
+    avg = s.get("averageStats") or {}
+    out = {view.sport.stat(k): (v or 0.0) for k, v in avg.items()}
+    out["_fpts"] = s.get("appliedAverage") or 0.0
+    return out
+
+
+def _period_raw(side: dict) -> dict[str, float]:
+    """Sum of every rostered player's raw stats so far this matchup."""
+    from .views import matchup_total_split
+
+    totals: dict[str, float] = {}
+    for e in (side.get("rosterForMatchupPeriod") or {}).get("entries") or []:
+        split = matchup_total_split(player_of(e)) or {}
+        for k, v in (split.get("stats") or {}).items():
+            totals[k] = totals.get(k, 0.0) + (v or 0.0)
+    return totals
+
+
+def _remaining_production(view: LeagueView, wraps: list[dict]) -> tuple[dict[str, float], int, list[dict]]:
+    """Expected production from games not yet started through Sunday.
+
+    Each day, the team is assumed to start its best available players with a
+    game (healthy, not on IR), up to its number of starting slots.
+    """
+    from .views import end_of_week
+
+    starters = sum(c for s, c in view.slot_counts.items() if view.sport.is_starting_slot(s))
+    today = view.pro.today
+    days = view.pro.periods_between(today, end_of_week(today))
+    pool = [
+        w for w in wraps
+        if w.get("lineupSlotId") != view.sport.ir_slot
+        and view._injury(w, player_of(w)) not in OUT_STATUSES
+    ]
+    sums: dict[str, float] = {}
+    games_used = 0
+    day_notes = []
+    for d in days:
+        playing = []
+        for w in pool:
+            g = view.pro.game(player_of(w).get("proTeamId"), d)
+            if g and (g["start"] is None or g["start"] > view.pro.now):
+                playing.append(w)
+        playing.sort(key=lambda w: season_value(view, w) or -99, reverse=True)
+        used = playing[:starters]
+        games_used += len(used)
+        if len(playing) > starters:
+            day_notes.append({
+                "date": str(view.pro.period_date.get(d)),
+                "players_with_games": len(playing),
+                "starting_slots": starters,
+                "sitting": [player_of(w).get("fullName") for w in playing[starters:]],
+            })
+        for w in used:
+            for k, v in _season_avgs(view, w).items():
+                sums[k] = sums.get(k, 0.0) + v
+    return sums, games_used, day_notes
+
+
+def matchup_projection(view: LeagueView, raw: dict, team_id: int) -> dict:
+    from .views import end_of_week
+
+    if view.season_over:
+        return {"note": "The season is over."}
+    m = view.find_matchup(raw, view.current_matchup_period, team_id)
+    if not m:
+        return {"note": "No matchup this period (bye)."}
+    me, opp, _ = view._side(m, team_id)
+    if not opp.get("teamId"):
+        return {"note": "No opponent this period (bye)."}
+    if view.is_football:
+        return {
+            "note": "Football projections come from ESPN; see matchup_detail for the player-by-player version.",
+            "you": view._side_summary(me),
+            "opponent": view._side_summary(opp),
+        }
+
+    my_add, my_games, my_days = _remaining_production(view, view.roster_entries(team_id))
+    op_add, op_games, op_days = _remaining_production(view, view.roster_entries(opp.get("teamId")))
+    out: dict[str, Any] = {
+        "you": view.team_label(team_id),
+        "opponent": view.team_label(opp.get("teamId")),
+        "through": str(end_of_week(view.pro.today)),
+        "remaining_games_counted": {"you": my_games, "opponent": op_games},
+    }
+
+    if not view.is_categories:
+        now_me = me.get("totalPointsLive", me.get("totalPoints")) or 0.0
+        now_op = opp.get("totalPointsLive", opp.get("totalPoints")) or 0.0
+        pm, po = now_me + my_add.get("_fpts", 0.0), now_op + op_add.get("_fpts", 0.0)
+        out["points"] = {"you_now": rnd(now_me, 1), "opp_now": rnd(now_op, 1), "you_projected": rnd(pm, 1), "opp_projected": rnd(po, 1)}
+        out["projected_result"] = "You're projected to win" if pm > po else "You're projected to lose" if pm < po else "Projected tie"
+    else:
+        cur_me, cur_op = _cat_values(me), _cat_values(opp)
+        raw_me, raw_op = _period_raw(me), _period_raw(opp)
+        rows, won, lost, tied = [], 0, 0, 0
+        for c in view.categories:
+            k, name, low = str(c["id"]), c["name"], c["lower_is_better"]
+            if name in RATIO_PARTS:
+                mk, at = RATIO_PARTS[name]
+
+                def proj(cur_ratio, raw_tot, add):
+                    cur_att = raw_tot.get(RAW[at], 0.0)
+                    add_m, add_a = add.get(mk, 0.0), add.get(at, 0.0)
+                    if cur_att + add_a <= 0:
+                        return cur_ratio
+                    return ((cur_ratio or 0.0) * cur_att + add_m) / (cur_att + add_a)
+
+                y_now, o_now = cur_me.get(k), cur_op.get(k)
+                y_p, o_p = proj(y_now, raw_me, my_add), proj(o_now, raw_op, op_add)
+                digits = 3
+            else:
+                y_now, o_now = cur_me.get(k, 0.0), cur_op.get(k, 0.0)
+                y_p, o_p = (y_now or 0.0) + my_add.get(name, 0.0), (o_now or 0.0) + op_add.get(name, 0.0)
+                digits = 1
+            if y_p is None or o_p is None:
+                continue
+            better = (y_p < o_p) if low else (y_p > o_p)
+            worse = (y_p > o_p) if low else (y_p < o_p)
+            leader = "you" if better else "opp" if worse else "tied"
+            won += better
+            lost += worse
+            tied += not better and not worse
+            if name in RATIO_PARTS:
+                close = abs(y_p - o_p) < 0.01  # within one percentage point
+            else:
+                close = abs(y_p - o_p) / max(abs(y_p), abs(o_p), 1e-9) < 0.05
+            rows.append(compact({
+                "cat": name,
+                "you_now": rnd(y_now, digits),
+                "opp_now": rnd(o_now, digits),
+                "you_projected": rnd(y_p, digits),
+                "opp_projected": rnd(o_p, digits),
+                "projected_leader": leader,
+                "toss_up": True if close else None,
+                "lower_is_better": True if low else None,
+            }))
+        out["categories"] = rows
+        out["projected_score"] = f"{won}-{lost}-{tied}"
+        if view.scoring_type == "H2H_MOST_CATEGORIES":
+            out["projected_result"] = "win" if won > lost else "loss" if lost > won else "tie"
+        out["toss_ups"] = [r["cat"] for r in rows if r.get("toss_up")]
+    if my_days:
+        out["your_crowded_days"] = my_days
+    out["assumptions"] = (
+        "Season per-game averages; each team starts its best available healthy players each day up to its "
+        "starting-slot count (positions ignored); games already started are excluded; OUT and IR players excluded. "
+        "Matchup assumed to end Sunday."
+    )
+    return out

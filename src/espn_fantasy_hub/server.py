@@ -36,6 +36,9 @@ Key facts:
   lineups. For basketball use days_ahead=1 to plan tomorrow.
 - Injury status values: ACTIVE (omitted), QUESTIONABLE, DOUBTFUL, OUT,
   INJURY_RESERVE, DAY_TO_DAY, SUSPENSION.
+- Basketball weekly battle: `matchup_projection` projects final category totals
+  for both teams (and which categories are toss-ups) - use it to decide streaming
+  pickups and which categories to chase or concede.
 - Strategy: `power_rankings` (true strength + luck), `category_report` (category
   leagues: strengths/weaknesses/punts, swingable categories this week),
   `waiver_upgrades` (free agents better than your weakest players),
@@ -233,6 +236,14 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         return run(lambda h: h.category_report(league, team))
 
     @mcp.tool(annotations=READ_ONLY)
+    def matchup_projection(league: LeagueArg = None, team: TeamArg = None) -> str:
+        """Basketball: projects where every category (or fantasy points) will end
+        up this matchup from current totals + each team's remaining games, shows
+        toss-up categories, and days when you have more players with games than
+        starting slots. Football: ESPN's projected scores."""
+        return run(lambda h: h.matchup_projection(league, team))
+
+    @mcp.tool(annotations=READ_ONLY)
     def waiver_upgrades(league: LeagueArg = None, team: TeamArg = None) -> str:
         """Compares the best available free agents/waiver players to a team's
         weakest players, by season value and recent form, and lists clear upgrades."""
@@ -296,6 +307,58 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         """Send a trade offer (EXPERIMENTAL). Preview shows the offer plus a quick
         analysis; confirm=true sends it. Ask the user to verify in the ESPN app."""
         return run(lambda h: h.propose_trade(league, partner, give, receive, confirm))
+
+    # ---- guided workflows (MCP prompts) -------------------------------------------
+    @mcp.prompt(title="Daily check-in")
+    def daily_checkin() -> str:
+        """Check every league for lineup problems, injuries and matchup status."""
+        return (
+            "Do my daily fantasy check-in. Call my_leagues first. Then for EVERY league run lineup_check "
+            "(basketball: also days_ahead=1 for tomorrow). For basketball leagues also run matchup_projection. "
+            "Report, league by league: anything I must fix before games lock (with exact swaps or free-agent "
+            "options and game times), questionable players to watch, how my matchup is going, and the 1-3 "
+            "highest-impact moves. Use the move tools only as previews unless I approve."
+        )
+
+    @mcp.prompt(title="Waiver wire plan")
+    def waiver_plan(league: str) -> str:
+        """Who to add/drop (and how much FAAB to bid) in one league."""
+        return (
+            f"Build my waiver plan for league '{league}'. Use league_settings (waiver type, FAAB, pickup limits), "
+            "team_roster for my team, waiver_upgrades, free_agents (by position for football; sorted by l7/l15 for "
+            "basketball), category_report for category leagues, and player_info on the top candidates. Recommend "
+            "specific adds with matching drops, FAAB bids where relevant, and why. Preview with add_player; don't "
+            "submit until I approve."
+        )
+
+    @mcp.prompt(title="Trade ideas")
+    def trade_ideas(league: str) -> str:
+        """Find realistic trades that help both sides."""
+        return (
+            f"Find trade ideas for me in league '{league}'. Use standings, power_rankings, all_rosters, my "
+            "team_roster, and category_report (category leagues) to find teams whose surplus matches my needs and "
+            "vice versa. For the 2-3 best ideas run trade_analyzer and explain why the other manager might accept. "
+            "Don't send anything; offer to preview propose_trade if I like one."
+        )
+
+    @mcp.prompt(title="Matchup game plan")
+    def matchup_gameplan(league: str) -> str:
+        """How to win this week's matchup."""
+        return (
+            f"Make a game plan to win my current matchup in league '{league}'. Use matchup_detail, "
+            "matchup_projection, lineup_check (and days_ahead for basketball), team_roster for both teams and "
+            "free_agents. Tell me which categories/positions are winnable or lost, specific streaming pickups "
+            "(respecting the league's pickup limit), and lineup decisions day by day."
+        )
+
+    @mcp.prompt(title="Season outlook")
+    def season_outlook(league: str) -> str:
+        """Playoff chances and long-term strategy."""
+        return (
+            f"Give me a season outlook for league '{league}': standings, power_rankings (luck), team_schedule "
+            "(strength of remaining schedule), playoff odds and trade deadline from league_settings. Tell me "
+            "whether to buy or sell and the concrete moves that would most improve my playoff chances."
+        )
 
     @mcp.tool(annotations=READ_ONLY)
     def refresh() -> str:

@@ -149,3 +149,46 @@ def test_daily_pickup_options_play_that_day(basketball_data):
             assert o["game"] != "no game"
         with_options += bool(issue.get("free_agent_options"))
     assert with_options >= 1
+
+
+def test_matchup_projection_categories(basketball_data):
+    core = basketball_data["core"]
+    core["status"]["currentMatchupPeriod"] = 10
+    for m in core["schedule"]:
+        if m["matchupPeriodId"] >= 10:
+            m["winner"] = "UNDECIDED"
+    for m in basketball_data["scoreboard_10"]["schedule"]:
+        m["winner"] = "UNDECIDED"
+    hub, period = _in_season_hub(basketball_data, dt.date(2023, 1, 10))
+    out = hub.matchup_projection()
+    assert out["remaining_games_counted"]["you"] > 0
+    cats = out["categories"]
+    assert len(cats) == 8
+    for c in cats:
+        assert c["projected_leader"] in ("you", "opp", "tied")
+        if c["cat"] not in ("FG%", "FT%"):
+            assert c["you_projected"] >= c["you_now"]  # counting stats only go up
+        else:
+            assert 0 <= c["you_projected"] <= 1
+    w, l, t = map(int, out["projected_score"].split("-"))
+    assert w + l + t == 8
+    assert "assumptions" in out
+
+
+def test_matchup_projection_points_variant(basketball_data):
+    core = basketball_data["core"]
+    core["settings"]["scoringSettings"]["scoringType"] = "H2H_POINTS"
+    core["status"]["currentMatchupPeriod"] = 10
+    for m in core["schedule"]:
+        if m["matchupPeriodId"] >= 10:
+            m["winner"] = "UNDECIDED"
+    for t in core["teams"]:
+        for e in t["roster"]["entries"]:
+            for s in player_of(e).get("stats") or []:
+                if s["statSourceId"] == 0 and s["statSplitTypeId"] == 0:
+                    s["appliedAverage"] = 30.0
+    hub, period = _in_season_hub(basketball_data, dt.date(2023, 1, 10))
+    out = hub.matchup_projection()
+    pts = out["points"]
+    assert pts["you_projected"] >= pts["you_now"]
+    assert out["projected_result"]
