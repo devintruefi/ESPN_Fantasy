@@ -46,6 +46,7 @@ class Settings:
     swid: str | None = None
     leagues: list[LeagueConfig] = field(default_factory=list)
     auto_discover: bool = True
+    allow_writes: bool = False
     timezone: str | None = None
     config_path: Path | None = None
 
@@ -136,6 +137,7 @@ def load_settings(environ: dict | None = None, config_path: str | Path | None = 
         settings.espn_s2 = data.get("espn_s2") or None
         settings.swid = data.get("swid") or None
         settings.auto_discover = bool(data.get("auto_discover", True))
+        settings.allow_writes = bool(data.get("allow_writes", False))
         settings.timezone = data.get("timezone") or None
         for i, raw in enumerate(data.get("league", []) or []):
             settings.leagues.append(_parse_league_entry(raw, f"{path} [[league]] #{i + 1}"))
@@ -152,6 +154,8 @@ def load_settings(environ: dict | None = None, config_path: str | Path | None = 
         settings.leagues.extend(lg for lg in env_leagues if (lg.sport, lg.league_id) not in known)
     if env.get("ESPN_AUTO_DISCOVER"):
         settings.auto_discover = env["ESPN_AUTO_DISCOVER"].strip().lower() not in ("0", "false", "no")
+    if env.get("ESPN_ALLOW_WRITES"):
+        settings.allow_writes = env["ESPN_ALLOW_WRITES"].strip().lower() in ("1", "true", "yes", "on")
     if env.get("ESPN_TIMEZONE"):
         settings.timezone = env["ESPN_TIMEZONE"]
 

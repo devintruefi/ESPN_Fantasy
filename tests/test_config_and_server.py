@@ -78,7 +78,13 @@ def test_server_tools(football_hub):
     tools = asyncio.run(mcp.list_tools())
     names = {t.name for t in tools}
     assert {"my_leagues", "lineup_check", "free_agents", "matchup_detail", "player_info", "standings"} <= names
-    assert all(t.annotations.readOnlyHint for t in tools)
+    writes = {"set_lineup", "add_player", "drop_player", "propose_trade"}
+    assert writes <= names
+    for t in tools:
+        if t.name in writes:
+            assert t.annotations.destructiveHint and not t.annotations.readOnlyHint
+        else:
+            assert t.annotations.readOnlyHint
     out = _call(mcp, "standings", {})
     assert len(out["standings"]) == 12
     out = _call(mcp, "lineup_check", {"team": "T1"})

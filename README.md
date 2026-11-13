@@ -1,8 +1,9 @@
 # ESPN Fantasy Hub
 
-An MCP server that gives Claude (Claude Desktop or Claude Code) a full,
-**read-only** view of your ESPN **fantasy football** and **fantasy basketball**
-leagues, so you can ask things like:
+An MCP server that gives Claude a full view of your ESPN **fantasy football**
+and **fantasy basketball** leagues (every team, matchup, stat and setting),
+strategy tools, and (optionally) the ability to make moves with your approval.
+Ask things like:
 
 - "Check all my lineups. Anyone hurt, on bye, or without a game?"
 - "Who are the best waiver adds at RB this week in my work league?"
@@ -31,10 +32,50 @@ It reads the same data the ESPN site and app show, for **every team in each leag
 | `draft_results` | Every draft pick, auction price, keepers |
 | `refresh` | Clears cached data after you make a move in the ESPN app |
 
-**It cannot make moves.** It never sets lineups, claims players or sends trades.
-Claude tells you exactly what to do, and you do it in the ESPN app.
+**Strategy**
 
-## 1. Install
+| Tool | What it returns |
+|---|---|
+| `power_rankings` | True strength: all-play record, expected wins, luck, scoring and recent form |
+| `category_report` | Category leagues: rank in every category, strengths/weaknesses, punt candidates, swingable categories this week |
+| `waiver_upgrades` | Free agents who beat your weakest players, by season value and recent form |
+| `trade_analyzer` | Both sides' value, each team's best-lineup change, your category changes |
+
+**Moves** (only when `ESPN_ALLOW_WRITES=1`)
+
+| Tool | What it does |
+|---|---|
+| `set_lineup` | Start/bench players or place them in slots (basketball: any day this week) |
+| `add_player` | Pick up a free agent, or put in a waiver claim with a FAAB bid, optionally dropping someone |
+| `drop_player` | Release a player |
+| `propose_trade` | Send a trade offer (experimental) |
+
+Every move is **preview first**: Claude shows you exactly what will change, and
+only sends it after you say yes (`confirm=true`). Claude's own permission prompt
+for these tools is a second check. You can later choose "always allow" in Claude
+once you trust it.
+
+## Option A: hosted (works in Claude on web, desktop and phone)
+
+Deploy this repo to Vercel (or any host that runs Python ASGI apps). It
+serves MCP at `/mcp/<MCP_ACCESS_TOKEN>`.
+
+Environment variables (Vercel → Project → Settings → Environment Variables):
+
+| Variable | Value |
+|---|---|
+| `MCP_ACCESS_TOKEN` | A long random secret. Anyone with the URL can use your leagues, so keep it private |
+| `ESPN_S2`, `ESPN_SWID` | Your ESPN cookies (see step 2 below). Mark them **Sensitive** |
+| `ESPN_ALLOW_WRITES` | `1` to enable moves (leave unset for read-only) |
+| `ESPN_TIMEZONE` | e.g. `America/New_York` (times are shown in this zone) |
+| `ESPN_LEAGUES` | Optional: `football:123,football:456,basketball:789` if auto-discovery misses one |
+
+Then in Claude: **Settings → Connectors → Add custom connector**, and paste
+`https://<your-project>.vercel.app/mcp/<MCP_ACCESS_TOKEN>`.
+
+## Option B: local (Claude Desktop / Claude Code on one computer)
+
+### 1. Install
 
 You need [uv](https://docs.astral.sh/uv/getting-started/installation/), a
 one-line install:
@@ -58,7 +99,7 @@ uv tool install /path/to/espn-fantasy-hub
 This puts an `espn-fantasy-hub` command on your PATH. To update later, run
 `uv tool install --reinstall /path/to/espn-fantasy-hub`.
 
-## 2. Connect your ESPN account
+### 2. Connect your ESPN account
 
 Private leagues (almost all of them) need two cookies from your ESPN login.
 They stay on your computer, in a private config file, and are only ever sent
@@ -87,7 +128,7 @@ the league id is the `leagueId=` number in the league's URL. The setup saves
 
 Run `espn-fantasy-hub doctor` anytime to recheck.
 
-## 3. Add it to Claude
+### 3. Add it to Claude
 
 **Claude Desktop:** open Settings → Developer → Edit Config, and add the server
 (use the full path printed by `which espn-fantasy-hub` on Mac, or

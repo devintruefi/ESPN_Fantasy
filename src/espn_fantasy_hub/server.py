@@ -36,9 +36,19 @@ Key facts:
   lineups. For basketball use days_ahead=1 to plan tomorrow.
 - Injury status values: ACTIVE (omitted), QUESTIONABLE, DOUBTFUL, OUT,
   INJURY_RESERVE, DAY_TO_DAY, SUSPENSION.
-- This server cannot make moves (lineups, waivers, trades). Tell the user exactly
-  what to do in the ESPN app instead.
-- Data is cached ~30-90 seconds; call `refresh` if the user just made a move.
+- Strategy: `power_rankings` (true strength + luck), `category_report` (category
+  leagues: strengths/weaknesses/punts, swingable categories this week),
+  `waiver_upgrades` (free agents better than your weakest players),
+  `trade_analyzer` (value both sides + best-lineup impact for both teams).
+  Combine tools: e.g. for a trade, look at standings, both rosters, the partner's
+  needs, and trade_analyzer before recommending.
+- MOVES (set_lineup, add_player, drop_player, propose_trade) change the user's real
+  team. ALWAYS call them first WITHOUT confirm to get a preview, show the user the
+  exact changes, and only call again with confirm=true after the user says yes
+  (unless the user has explicitly told you to make moves without asking).
+  Trade proposals are experimental: tell the user to double-check in the ESPN app.
+- Times are shown in the configured time zone. Data is cached ~30-90 seconds;
+  call `refresh` if the user just made a move in the ESPN app.
 """
 
 LeagueArg = Annotated[
@@ -51,6 +61,12 @@ TeamArg = Annotated[
 ]
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
+ConfirmArg = Annotated[
+    bool,
+    Field(description="false (default) = preview only, nothing is sent. true = actually make the move; only after the user approved the preview."),
+]
+NamesArg = Annotated[list[str] | None, Field(description="Player names.")]
 
 
 def _dump(data: Any) -> str:
@@ -199,6 +215,87 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         """The league's draft: every pick (or one team's picks), with auction
         prices and keepers."""
         return run(lambda h: h.draft(league, team))
+
+    # ---- strategy ---------------------------------------------------------------
+    @mcp.tool(annotations=READ_ONLY)
+    def power_rankings(league: LeagueArg = None) -> str:
+        """True team strength: all-play record (record if every team played every
+        team every week), expected wins, luck, scoring average and recent form,
+        combined into a power score. Great for 'who's actually good' and
+        playoff-race talk."""
+        return run(lambda h: h.power_rankings(league))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def category_report(league: LeagueArg = None, team: TeamArg = None) -> str:
+        """Category leagues: where a team ranks in every category (strengths,
+        weaknesses, punt candidates) and which categories are swingable in the
+        current matchup."""
+        return run(lambda h: h.category_report(league, team))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def waiver_upgrades(league: LeagueArg = None, team: TeamArg = None) -> str:
+        """Compares the best available free agents/waiver players to a team's
+        weakest players, by season value and recent form, and lists clear upgrades."""
+        return run(lambda h: h.waiver_upgrades(league, team))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def trade_analyzer(
+        give: NamesArg = None,
+        receive: NamesArg = None,
+        partner: Annotated[str | None, Field(description="Trade partner team (optional; inferred from the players you receive).")] = None,
+        league: LeagueArg = None,
+    ) -> str:
+        """Evaluate a trade: each player's season and recent value, totals, how each
+        team's best starting lineup changes, and (category leagues) your per-game
+        category changes. Doesn't send anything."""
+        return run(lambda h: h.trade_analyzer(league, give, receive, partner))
+
+    # ---- moves --------------------------------------------------------------------
+    @mcp.tool(annotations=WRITE)
+    def set_lineup(
+        start: NamesArg = None,
+        bench: NamesArg = None,
+        moves: Annotated[dict[str, str] | None, Field(description="Explicit placements: {player name: slot}, e.g. {'Josh Allen': 'QB', 'X': 'IR'}.")] = None,
+        days_ahead: Annotated[int, Field(description="Basketball: 0 = today's lineup, 1 = tomorrow, ...", ge=0, le=7)] = 0,
+        league: LeagueArg = None,
+        confirm: ConfirmArg = False,
+    ) -> str:
+        """Change the user's lineup: start / bench players or put them in specific
+        slots. Preview first (confirm=false), then confirm=true after approval."""
+        return run(lambda h: h.set_lineup(league, start, bench, moves, days_ahead, confirm))
+
+    @mcp.tool(annotations=WRITE)
+    def add_player(
+        add: Annotated[str, Field(description="Player to pick up.")],
+        drop: Annotated[str | None, Field(description="Player to drop to make room (needed when the roster is full).")] = None,
+        bid: Annotated[int | None, Field(description="FAAB bid in dollars, for waiver claims in FAAB leagues.", ge=0)] = None,
+        league: LeagueArg = None,
+        confirm: ConfirmArg = False,
+    ) -> str:
+        """Pick up a free agent (immediate) or put in a waiver claim (processed at
+        waiver time), optionally dropping someone. Preview first, then confirm."""
+        return run(lambda h: h.add_player(league, add, drop, bid, confirm))
+
+    @mcp.tool(annotations=WRITE)
+    def drop_player(
+        player: Annotated[str, Field(description="Player to release.")],
+        league: LeagueArg = None,
+        confirm: ConfirmArg = False,
+    ) -> str:
+        """Release a player from the user's roster. Preview first, then confirm."""
+        return run(lambda h: h.drop_player(league, player, confirm))
+
+    @mcp.tool(annotations=WRITE)
+    def propose_trade(
+        partner: Annotated[str, Field(description="Team to send the offer to.")],
+        give: NamesArg = None,
+        receive: NamesArg = None,
+        league: LeagueArg = None,
+        confirm: ConfirmArg = False,
+    ) -> str:
+        """Send a trade offer (EXPERIMENTAL). Preview shows the offer plus a quick
+        analysis; confirm=true sends it. Ask the user to verify in the ESPN app."""
+        return run(lambda h: h.propose_trade(league, partner, give, receive, confirm))
 
     @mcp.tool(annotations=READ_ONLY)
     def refresh() -> str:

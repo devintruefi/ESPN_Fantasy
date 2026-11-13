@@ -80,7 +80,9 @@ def ms_to_dt(ms, tz=None) -> dt.datetime | None:
 def fmt_time(when: dt.datetime | None) -> str | None:
     if when is None:
         return None
-    return when.strftime("%a %b %d %I:%M%p").replace(" 0", " ")
+    text = when.strftime("%a %b %d %I:%M%p").replace(" 0", " ")
+    tz = when.tzname()
+    return f"{text} {tz}" if tz and tz != "UTC" else text
 
 
 def fmt_date(when: dt.datetime | None) -> str | None:

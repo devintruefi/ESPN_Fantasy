@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import analysis
+from . import analysis, strategy, writes
 from .config import LeagueConfig, Settings
 from .discovery import discover
 from .espn import EspnError, LeagueClient, LeagueNotFound
@@ -586,3 +586,205 @@ class Hub:
         for h in self.handles():
             h.client.clear()
         return {"ok": True, "message": "Cleared cached ESPN data; the next request fetches fresh data."}
+
+    # ---- strategy ----------------------------------------------------------------
+    def power_rankings(self, league=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        return self._header(h, view) | strategy.power_rankings(view)
+
+    def category_report(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        tid = self._team(view, team)
+        raw = None
+        if view.is_categories and not view.season_over:
+            raw = h.client.scoreboard(view.current_matchup_period, view.scoring_period)
+        return self._header(h, view) | strategy.category_report(view, tid, raw)
+
+    def waiver_upgrades(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h, ratings=True)
+        tid = self._team(view, team)
+        pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
+        return self._header(h, view) | strategy.waiver_upgrades(view, tid, pool)
+
+    def _find_owner(self, view: LeagueView, name: str, exclude=None) -> tuple[int, dict]:
+        hits = []
+        for tid in view.teams:
+            if tid == exclude:
+                continue
+            try:
+                hits.append((tid, writes.find_on_roster(view, view.roster_entries(tid), name)))
+            except writes.MoveError:
+                continue
+        if len(hits) != 1:
+            raise UserError(
+                f"Couldn't find exactly one rostered player matching {name!r}"
+                + (" on another team." if exclude else ".")
+            )
+        return hits[0]
+
+    def trade_analyzer(self, league=None, give=None, receive=None, partner=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        me = self._team(view, None)
+        give, receive = list(give or []), list(receive or [])
+        if not give and not receive:
+            raise UserError("Name the players you'd give and/or receive.")
+        try:
+            give_w = [writes.find_on_roster(view, view.roster_entries(me), n) for n in give]
+        except writes.MoveError as e:
+            raise UserError(str(e)) from None
+        partner_id = self._team(view, partner) if partner else None
+        recv_w = []
+        for n in receive:
+            if partner_id:
+                try:
+                    recv_w.append(writes.find_on_roster(view, view.roster_entries(partner_id), n))
+                except writes.MoveError as e:
+                    raise UserError(str(e)) from None
+            else:
+                tid, w = self._find_owner(view, n, exclude=me)
+                partner_id = tid
+                recv_w.append(w)
+        if partner_id is None:
+            raise UserError("Say which team you're trading with.")
+        return self._header(h, view) | strategy.trade_analysis(view, me, partner_id, give_w, recv_w)
+
+    # ---- moves (writes) ---------------------------------------------------------
+    def _write_context(self, league):
+        if not self.settings.allow_writes:
+            raise UserError(
+                "Moves are turned off. Set ESPN_ALLOW_WRITES=1 (or allow_writes = true in the config) to enable them."
+            )
+        if not self.settings.has_credentials:
+            raise UserError("Moves need your ESPN login cookies (espn_s2 and SWID).")
+        h = self.resolve(league)
+        view = self.view(h)
+        me = view.my_team_id
+        if me is None:
+            raise UserError("Couldn't identify your team in this league, so I can't make moves for it.")
+        return h, view, me
+
+    def _submit(self, h: LeagueHandle, payload: dict) -> dict:
+        try:
+            body = writes.post_transaction(h.sport, h.season, h.cfg.league_id, self.settings.cookies(), payload)
+        except writes.MoveError as e:
+            raise UserError(str(e)) from None
+        h.client.clear()
+        return compact({
+            "espn_status": body.get("status"),
+            "transaction_id": body.get("id"),
+            "is_pending": body.get("isPending"),
+        })
+
+    PREVIEW_NOTE = "PREVIEW ONLY — nothing was sent. Show this to the user; if they approve, call again with the same arguments and confirm=true."
+
+    def set_lineup(self, league=None, start=None, bench=None, moves=None, days_ahead: int = 0, confirm: bool = False) -> dict:
+        h, view, me = self._write_context(league)
+        period = view.scoring_period
+        entries = view.roster_entries(me)
+        if days_ahead and not view.is_football:
+            period += int(days_ahead)
+            entries = view.roster_entries(me, h.client.roster_for_period(period))
+        try:
+            plan, steps, warnings = writes.plan_lineup(view, entries, start, bench, moves)
+        except writes.MoveError as e:
+            raise UserError(str(e)) from None
+        when = f"Week {period}" if view.is_football else str(view.pro.period_date.get(period, f"scoring period {period}"))
+        out: dict[str, Any] = self._header(h, view) | {"team": view.team_label(me), "lineup_for": when, "changes": steps}
+        if warnings:
+            out["warnings"] = warnings
+        if not confirm:
+            return out | {"status": self.PREVIEW_NOTE}
+        result = self._submit(h, writes.lineup_payload(me, self.settings.swid, period, plan))
+        # verify by re-reading the lineup
+        fresh = h.client.roster_for_period(period) if (days_ahead and not view.is_football) else None
+        view2 = self.view(h)
+        now_slots = {player_of(e).get("id"): e.get("lineupSlotId") for e in view2.roster_entries(me, fresh)}
+        verified = all(now_slots.get(pid) == to for pid, _, to in plan)
+        return out | {"status": "SUBMITTED", "verified_in_espn": verified} | result
+
+    def add_player(self, league=None, add: str = "", drop: str | None = None, bid: int | None = None, confirm: bool = False) -> dict:
+        h, view, me = self._write_context(league)
+        matches = match_players(add, h.client.player_index())
+        if not matches:
+            raise UserError(f"No player found matching {add!r}.")
+        if len(matches) > 1 and not any(m.get("fullName", "").lower() == add.strip().lower() for m in matches):
+            raise UserError("Several players match: " + ", ".join(m.get("fullName") for m in matches) + ". Use the full name.")
+        pick = next((m for m in matches if m.get("fullName", "").lower() == add.strip().lower()), matches[0])
+        card = (h.client.player_cards([pick["id"]], view.final_scoring_period or view.scoring_period).get("players") or [{}])[0]
+        status, owner = card.get("status"), card.get("onTeamId")
+        if owner:
+            raise UserError(f"{pick.get('fullName')} is on {view.team_label(owner)}. Use the trade tools instead.")
+        drop_w = None
+        my_entries = view.roster_entries(me)
+        if drop:
+            try:
+                drop_w = writes.find_on_roster(view, my_entries, drop)
+            except writes.MoveError as e:
+                raise UserError(str(e)) from None
+            if ppe_of(drop_w).get("lineupLocked"):
+                raise UserError(f"{player_of(drop_w).get('fullName')} is locked (game started) and can't be dropped right now.")
+        active = [e for e in my_entries if e.get("lineupSlotId") != h.sport.ir_slot]
+        warnings = []
+        if len(active) >= writes.roster_limit(view) and not drop_w:
+            raise UserError(f"Your roster is full ({len(active)} players). Say who to drop.")
+        waiver = status == "WAIVERS"
+        if waiver and view.uses_faab and bid is None:
+            warnings.append("This league uses FAAB and no bid was given, so the claim would bid $0.")
+        if bid is not None and not view.uses_faab:
+            warnings.append("This league doesn't use FAAB; the bid is ignored and waiver priority decides.")
+        steps = [f"{'Claim off waivers' if waiver else 'Add free agent'}: {pick.get('fullName')}"]
+        if drop_w:
+            steps.append(f"Drop: {player_of(drop_w).get('fullName')}")
+        if waiver and view.uses_faab:
+            steps.append(f"FAAB bid: ${int(bid or 0)} (you have ${view.team_overview(me).get('faab_left', '?')} left)")
+        out: dict[str, Any] = self._header(h, view) | {"team": view.team_label(me), "changes": steps}
+        if waiver:
+            out["note"] = "Waiver claims process at the league's waiver time; this only submits the claim."
+        if warnings:
+            out["warnings"] = warnings
+        if not confirm:
+            return out | {"status": self.PREVIEW_NOTE}
+        payload = writes.add_drop_payload(
+            me, self.settings.swid, view.scoring_period,
+            add_id=pick["id"], drop_id=player_of(drop_w).get("id") if drop_w else None,
+            waiver=waiver, bid=bid if view.uses_faab else None,
+        )
+        result = self._submit(h, payload)
+        if not waiver:
+            view2 = self.view(h)
+            result["verified_in_espn"] = any(player_of(e).get("id") == pick["id"] for e in view2.roster_entries(me))
+        return out | {"status": "SUBMITTED"} | result
+
+    def drop_player(self, league=None, player: str = "", confirm: bool = False) -> dict:
+        h, view, me = self._write_context(league)
+        try:
+            w = writes.find_on_roster(view, view.roster_entries(me), player)
+        except writes.MoveError as e:
+            raise UserError(str(e)) from None
+        if ppe_of(w).get("lineupLocked"):
+            raise UserError(f"{player_of(w).get('fullName')} is locked (game started) and can't be dropped right now.")
+        out = self._header(h, view) | {"team": view.team_label(me), "changes": [f"Drop: {player_of(w).get('fullName')}"]}
+        if not confirm:
+            return out | {"status": self.PREVIEW_NOTE}
+        result = self._submit(h, writes.add_drop_payload(me, self.settings.swid, view.scoring_period, drop_id=player_of(w)["id"]))
+        return out | {"status": "SUBMITTED"} | result
+
+    def propose_trade(self, league=None, partner=None, give=None, receive=None, confirm: bool = False) -> dict:
+        h, view, me = self._write_context(league)
+        analysis_out = self.trade_analyzer(league, give, receive, partner)
+        partner_id = view.find_team(analysis_out["partner"].replace(" (you)", "")) or self._team(view, partner)
+        give_ids = [player_of(writes.find_on_roster(view, view.roster_entries(me), n))["id"] for n in give or []]
+        get_ids = [player_of(writes.find_on_roster(view, view.roster_entries(partner_id), n))["id"] for n in receive or []]
+        out = self._header(h, view) | {
+            "proposal": {"to": view.team_label(partner_id), "you_give": give, "you_get": receive, "expires_in_days": 2},
+            "analysis": {k: analysis_out[k] for k in ("summary", "your_starting_lineup_value", "their_starting_lineup_value") if k in analysis_out},
+            "experimental": "Trade proposals use an ESPN endpoint that hasn't been verified on a live league yet. Check the ESPN app after sending.",
+        }
+        if not confirm:
+            return out | {"status": self.PREVIEW_NOTE}
+        payload = writes.trade_payload(me, self.settings.swid, view.scoring_period, partner_id, give_ids, get_ids, writes.now_ms(self.now_fn()))
+        return out | {"status": "SUBMITTED"} | self._submit(h, payload)
