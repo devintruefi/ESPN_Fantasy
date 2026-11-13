@@ -144,12 +144,13 @@ def load_settings(environ: dict | None = None, config_path: str | Path | None = 
     elif config_path or env.get("ESPN_FANTASY_CONFIG"):
         raise ConfigError(f"Config file not found: {path}")
 
+    env = {k: (v.strip() if isinstance(v, str) else v) for k, v in env.items() if k.startswith("ESPN_")}
     if env.get("ESPN_S2"):
         settings.espn_s2 = env["ESPN_S2"]
     if env.get("ESPN_SWID"):
         settings.swid = env["ESPN_SWID"]
     if env.get("ESPN_LEAGUES"):
-        env_leagues = parse_leagues_env(env["ESPN_LEAGUES"])
+        env_leagues = parse_leagues_env(env["ESPN_LEAGUES"].strip('"').strip("'"))
         known = {(lg.sport, lg.league_id) for lg in settings.leagues}
         settings.leagues.extend(lg for lg in env_leagues if (lg.sport, lg.league_id) not in known)
     if env.get("ESPN_AUTO_DISCOVER"):

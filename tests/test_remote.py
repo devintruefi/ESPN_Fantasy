@@ -54,3 +54,16 @@ def test_mcp_over_http(football_hub):
     # bearer header works too (Claude Code / scripts)
     r = call(app, "/mcp", rpc("tools/list", {}, 4), HEADERS | {"authorization": f"Bearer {TOKEN}"})
     assert r.status_code == 200
+
+
+def test_health_reports_config_without_values(football_hub):
+    from espn_fantasy_hub.remote import config_status
+    st = config_status("x" * 20, {"ESPN_S2": "secret-s2", "ESPN_SWID": "{A}", "ESPN_ALLOW_WRITES": "1"})
+    assert st["access_token"] == "set" and st["espn_login"] == "set" and st["writes_enabled"] is True
+    assert "secret" not in str(st)
+    assert config_status("short", {})["access_token"].startswith("too short")
+    assert config_status("", {"ESPN_S2": "a"})["espn_login"] == "ESPN_SWID missing"
+    app = create_app("  " + TOKEN + "\n", football_hub)  # pasted with whitespace
+    assert call(app, f"/mcp/{TOKEN}", INIT).status_code == 200
+    body = call(app, "/health").json()
+    assert body["config"]["access_token"] == "set"

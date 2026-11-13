@@ -45,8 +45,34 @@ def _presented_token(scope) -> str | None:
     return (qs.get("key") or [None])[0]
 
 
+def _clean(value: str | None) -> str:
+    """Trim whitespace/quotes people often paste along with a secret."""
+    return (value or "").strip().strip('"').strip("'").strip()
+
+
+def config_status(token: str, environ=None) -> dict:
+    """What the server can see, as yes/no only (never values)."""
+    env = os.environ if environ is None else environ
+    s2, swid = _clean(env.get("ESPN_S2")), _clean(env.get("ESPN_SWID"))
+    if not token:
+        tok = "missing"
+    elif len(token) < 16:
+        tok = f"too short ({len(token)} characters; expected 16+)"
+    else:
+        tok = "set"
+    login = "set" if s2 and swid else ("missing" if not (s2 or swid) else ("ESPN_SWID missing" if s2 else "ESPN_S2 missing"))
+    return {
+        "access_token": tok,
+        "espn_login": login,
+        "writes_enabled": _clean(env.get("ESPN_ALLOW_WRITES")).lower() in ("1", "true", "yes", "on"),
+        "timezone": _clean(env.get("ESPN_TIMEZONE")) or "server default (UTC)",
+        "leagues_listed": len([x for x in _clean(env.get("ESPN_LEAGUES")).split(",") if x.strip()]),
+        "vercel_env": env.get("VERCEL_ENV"),
+    }
+
+
 def create_app(token: str | None = None, hub=None):
-    token = token if token is not None else os.environ.get("MCP_ACCESS_TOKEN", "")
+    token = _clean(token if token is not None else os.environ.get("MCP_ACCESS_TOKEN", ""))
     mcp = build_server(hub)
 
     async def app(scope, receive, send):
@@ -61,14 +87,19 @@ def create_app(token: str | None = None, hub=None):
         if scope["type"] != "http":
             return
         path = scope.get("path") or "/"
-        if path in ("/", "/health", "/api/index"):
-            await _send_json(send, 200, {"ok": True, "service": "espn-fantasy-hub", "mcp": "/mcp/<access token>"})
+        if path in ("/", "/health"):
+            await _send_json(send, 200, {
+                "ok": True,
+                "service": "espn-fantasy-hub",
+                "mcp": "/mcp/<access token>",
+                "config": config_status(token),
+            })
             return
         if path.startswith("/.well-known/"):
             await _send_json(send, 404, {"error": "Not found."})  # no OAuth here
             return
         if not token or len(token) < 16:
-            await _send_json(send, 503, {"error": "Server has no MCP_ACCESS_TOKEN configured; refusing requests."})
+            await _send_json(send, 503, {"error": "MCP_ACCESS_TOKEN is missing or too short on the server; refusing requests. See /health."})
             return
         presented = _presented_token(scope)
         if not presented or not hmac.compare_digest(presented.encode(), token.encode()):
