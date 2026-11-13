@@ -50,7 +50,7 @@ Key facts:
   exact changes, and only call again with confirm=true after the user says yes
   (unless the user has explicitly told you to make moves without asking).
   Trade proposals are experimental: tell the user to double-check in the ESPN app.
-- Times are shown in the configured time zone. Data is cached ~30-90 seconds;
+- Times are shown in the configured time zone. Data is cached up to ~45 seconds;
   call `refresh` if the user just made a move in the ESPN app.
 """
 

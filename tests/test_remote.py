@@ -67,3 +67,31 @@ def test_health_reports_config_without_values(football_hub):
     assert call(app, f"/mcp/{TOKEN}", INIT).status_code == 200
     body = call(app, "/health").json()
     assert body["config"]["access_token"] == "set"
+
+
+def test_non_post_methods_get_405(football_hub):
+    app = create_app(TOKEN, football_hub)
+
+    async def run(method):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="https://x.test") as c:
+            return await c.request(method, f"/mcp/{TOKEN}", headers={"accept": "text/event-stream"})
+
+    for method in ("GET", "DELETE", "PUT"):
+        r = asyncio.run(run(method))
+        assert r.status_code == 405 and r.headers["allow"] == "POST"
+
+
+def test_bad_requests_are_handled(football_hub):
+    app = create_app(TOKEN, football_hub)
+    r = call(app, f"/mcp/{TOKEN}", None)  # GET without accept header
+    assert r.status_code == 405
+
+    async def raw(body):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="https://x.test") as c:
+            return await c.post(f"/mcp/{TOKEN}", content=body, headers=HEADERS)
+
+    assert asyncio.run(raw("{not json")).status_code in (400, 422)
+    r = asyncio.run(raw(json.dumps(rpc("nope/nope"))))
+    assert "error" in r.json()

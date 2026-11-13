@@ -107,6 +107,19 @@ def create_app(token: str | None = None, hub=None):
             # an OAuth login flow, which this server doesn't use.
             await _send_json(send, 404, {"error": "Not found."})
             return
+        method = scope.get("method", "GET").upper()
+        if method != "POST":
+            # Stateless server: no standalone event stream (GET) and no sessions
+            # to end (DELETE). The MCP spec says to answer 405 so clients fall
+            # back to plain POST; an open GET stream would also tie up a
+            # serverless function until it times out.
+            await send({
+                "type": "http.response.start",
+                "status": 405,
+                "headers": [(b"allow", b"POST"), (b"content-type", b"application/json")],
+            })
+            await send({"type": "http.response.body", "body": b'{"error": "Use POST for MCP requests."}'})
+            return
         manager = StreamableHTTPSessionManager(app=mcp._mcp_server, event_store=None, json_response=True, stateless=True)
         async with manager.run():
             await manager.handle_request(scope, receive, send)

@@ -40,8 +40,10 @@ class EspnUnavailable(EspnError):
 
 
 # TTLs in seconds
-TTL_LIVE = 30
-TTL_LEAGUE = 90
+# Hosted deployments can run several instances, each with its own cache, so
+# keep league data fresh enough that a move made elsewhere shows up quickly.
+TTL_LIVE = 20
+TTL_LEAGUE = 45
 TTL_SLOW = 3600
 TTL_SEASON = 6 * 3600
 
