@@ -206,6 +206,19 @@ def season_outlook(view: LeagueView, live_raw: dict | None, past_raws: list[dict
         raise ValueError("season_outlook is for football points leagues")
     hist = projection_history(view, past_raws)
     players = {tid: [make_player(view, e, tid, hist) for e in view.roster_entries(tid)] for tid in view.teams}
+    # A defense's own season average barely predicts its points (r ~ 0.1 in testing), so a
+    # D/ST with no ESPN projections gets the league's typical projected D/ST value instead.
+    dst = [p["base"] for pl in players.values() for p in pl if p["pos"] == "D/ST" and p["n_proj"]]
+    dst_typical = st.median(dst) if dst else None
+
+    def shrink(p):
+        if p["pos"] == "D/ST" and not p["n_proj"] and dst_typical is not None:
+            p["base"] = dst_typical
+        return p
+
+    for pl in players.values():
+        for p in pl:
+            shrink(p)
     sd, bias, n_cal = score_noise(view, past_raws)
     reg_end = view.reg_season_periods or 0
     sched = _schedule(view)
@@ -372,7 +385,7 @@ def season_outlook(view: LeagueView, live_raw: dict | None, past_raws: list[dict
     w_reg = 0.4 if my_pct > 0.95 else 0.7   # a near-lock plays for the playoffs; a bubble team for now
     adds = []
     for wrap in pool:
-        pl = make_player(view, wrap, "FA", hist)
+        pl = shrink(make_player(view, wrap, "FA", hist))
         if pl["base"] < 3:
             continue
         g_reg = lineup_avg(mine + [pl], reg_weeks) - base_reg

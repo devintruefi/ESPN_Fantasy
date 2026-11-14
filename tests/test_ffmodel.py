@@ -95,3 +95,29 @@ def test_season_outlook_after_regular_season(football_hub):
 def test_season_outlook_rejects_basketball(basketball_hub):
     with pytest.raises(UserError):
         basketball_hub.season_outlook()
+
+
+def test_unprojected_defense_gets_typical_value(football_hub, football_data):
+    """A D/ST's season average is nearly noise: an unprojected defense with a big average must not be
+    valued like one ESPN actually projects that high."""
+    import copy
+
+    h = football_hub._handles[0]
+    view = football_hub.view(h)
+    wrap = next(copy.deepcopy(e) for t in view.teams for e in view.roster_entries(t)
+                if view.sport.position(e["playerPoolEntry"]["player"]) == "D/ST")
+    past = [football_data["scoreboard_prev"]]
+
+    def outlook_with(stats):
+        w = copy.deepcopy(wrap["playerPoolEntry"])
+        w["player"].update(id=-999, fullName="Test D/ST", stats=stats)
+        return ffmodel.season_outlook(view, None, past, [w], 1, sims=200)["best_adds"]
+
+    season = {"seasonId": view.season, "statSourceId": 0, "statSplitTypeId": 0, "scoringPeriodId": 0,
+              "appliedTotal": 135.0, "appliedAverage": 15.0, "stats": {}}
+    proj = {"seasonId": view.season, "statSourceId": 1, "statSplitTypeId": 1,
+            "scoringPeriodId": view.scoring_period, "appliedTotal": 15.0, "stats": {}}
+    projected = [a for a in outlook_with([season, proj]) if a["name"] == "Test D/ST"]
+    unprojected = [a for a in outlook_with([season]) if a["name"] == "Test D/ST"]
+    assert projected and projected[0]["value_per_game"] == 15.0
+    assert not unprojected or unprojected[0]["value_per_game"] < 10
