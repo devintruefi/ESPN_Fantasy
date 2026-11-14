@@ -13,7 +13,7 @@ from typing import Any
 
 from pathlib import Path
 
-from . import analysis, catmodel, strategy, writes
+from . import analysis, catmodel, ffmodel, strategy, writes
 from .config import LeagueConfig, Settings
 from .discovery import discover
 from .espn import EspnError, LeagueClient, LeagueNotFound
@@ -28,6 +28,7 @@ from .views import (
     fmt_time,
     pick_player,
     ms_to_dt,
+    num,
     player_of,
     ppe_of,
     rnd,
@@ -657,6 +658,24 @@ class Hub:
             return self._header(h, view) | strategy.football_schedule(view, tid)
         return self._header(h, view) | {"team": view.team_label(tid)} | catmodel.schedule_planner(view, tid)
 
+    def season_outlook(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        if not view.is_football or view.is_categories:
+            raise UserError("season_outlook is for football points leagues. For category leagues use "
+                            "category_strategy and schedule_planner.")
+        tid = self._team(view, team)
+        cur = view.current_matchup_period
+        past = []
+        for mp in range(max(1, cur - ffmodel.HIST_WEEKS), cur):
+            try:
+                past.append(h.client.scoreboard(mp, view._matchup_week(mp)))
+            except EspnError:
+                continue
+        live = None if view.season_over else h.client.scoreboard(cur, view.scoring_period)
+        pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
+        return self._header(h, view) | ffmodel.season_outlook(view, live, past, pool, tid)
+
     def strategy_playbook(self, league=None) -> dict:
         h = self.resolve(league)
         view = self.view(h)
@@ -685,6 +704,34 @@ class Hub:
         else:
             fmt = f"{s.get('format')}."
         playoff = f"{sched.get('playoff_teams', '?')} teams make the playoffs after {sched.get('regular_season_matchups', '?')} regular-season matchups."
+        extra: dict[str, str] = {}
+        if view.is_football:
+            fmt = f"Head-to-head points: {s.get('scoring_summary') or s.get('format')}."
+            reg = view.reg_season_periods or 0
+            weeks = [w for mp in sorted(view.matchup_periods) if mp > reg for w in view.matchup_periods[mp]]
+            if weeks:
+                playoff += f" Playoff weeks: NFL weeks {weeks[0]}-{weeks[-1]}."
+            if sched.get("playoff_teams") == 6:
+                playoff += " Seeds 1-2 skip the first round."
+            if sched.get("playoff_seeding_tiebreak"):
+                playoff += f" Seeding tiebreak: {str(sched['playoff_seeding_tiebreak']).replace('_', ' ').lower()}."
+            ks = []
+            for t in view.teams:
+                for e in view.roster_entries(t):
+                    p = player_of(e)
+                    if view.sport.position(p) == "K":
+                        a = num((find_split(p, 0, 0, view.season) or {}).get("appliedAverage"))
+                        if a:
+                            ks.append(a)
+            if ks:
+                k_avg = sum(ks) / len(ks)
+                extra["kicker_line"] = (
+                    f"Kickers here average {k_avg:.1f} points a game"
+                    + (" -- almost nothing. Never spend a pickup, FAAB or a roster spot decision on a kicker."
+                       if k_avg < 4 else ". A better kicker is worth a free pickup but not FAAB.")
+                )
+            else:
+                extra["kicker_line"] = "Check how this league scores kickers before streaming them."
         if not view.is_football:
             cal = {u["unit"]: u for u in catmodel.nba_calendar(view)}
             reg = view.reg_season_periods or 0
@@ -711,7 +758,7 @@ class Hub:
                    if trades.get("veto_votes_required") else ".")
             ),
             "playoff_line": playoff,
-        }
+        } | extra
         text = path.read_text(encoding="utf-8")
         for k, v in fill.items():
             text = text.replace("{" + k + "}", v)

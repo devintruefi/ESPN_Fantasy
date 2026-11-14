@@ -37,6 +37,11 @@ Ask Claude things like:
 |---|---|
 | `lineup_check` | Starters who are OUT, injured, on bye or without a game, the exact bench swap, free agents who play that day when the bench can't help, empty/IR slot tips, pickups left |
 | `matchup_projection` | Basketball: projected final category totals (or points) for both teams this week, toss-ups, days with more players than slots |
+| `season_outlook` | Football: simulated playoff, bye and title odds for every team, your week-by-week win chances and bye holes, the record you need, and the free agents that most raise your lineup |
+| `strategy_playbook` | The research-based playbook for the league's format, filled in with its rules (football points, basketball categories) |
+| `category_strategy` | Category leagues: odds in every category now and at full strength, which to build around or concede, core vs rotation spots, best-fit pickups |
+| `player_values` | Category leagues: G-score rankings (per-game value discounted for week-to-week noise), punt-aware |
+| `schedule_planner` | Games per week vs average, light days for streaming, playoff-week schedules; football byes by week |
 | `power_rankings` | All-play record (true strength), expected wins, luck, scoring and recent form |
 | `category_report` | Category leagues: rank in every category, strengths/weaknesses, punts, swingable categories now |
 | `waiver_upgrades` | Free agents who beat your weakest players |

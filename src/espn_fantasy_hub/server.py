@@ -36,6 +36,14 @@ How to give good advice:
   QUESTIONABLE/DAY_TO_DAY to re-check before lock.
 - Football: `week.proj` is ESPN's projection; `opp_rank_vs_pos` is the opponent's
   defense rank vs that position (1 = toughest, 32 = easiest); BYE = no game.
+  For start/sit, trust ESPN's projection: it already prices the matchup, and
+  adjusting it for `opp_rank_vs_pos` on top made predictions worse in testing.
+  For football season strategy, read `strategy_playbook`, then `season_outlook`
+  (playoff/bye/title odds from a simulation of the rest of the season, the user's
+  week-by-week win chances and byes, the record needed to make the playoffs, and the
+  free agents that most raise their lineup). Check how the league scores kickers
+  before suggesting a kicker move. Never suggest accepting a trade with the user's
+  current opponent before that week's games are done.
 - Basketball: lineups are DAILY (scoring periods are days; matchups run Mon-Sun).
   In category leagues ESPN's player rater (`rater`) is the best single value
   number. Use `matchup_projection` to see which categories are winnable or lost
@@ -43,8 +51,9 @@ How to give good advice:
   Respect the league's pickup limit (shown as `pickups`).
 - Season strategy: read `strategy_playbook` for the league's format, then use
   `category_strategy` (category leagues: build, core vs rotation spots, best-fit
-  pickups), `player_values` (G-score rankings, punt-aware) and `schedule_planner`
-  (matchup calendar, playoff-week schedules, light days for streaming).
+  pickups), `player_values` (G-score rankings, punt-aware), `season_outlook`
+  (football) and `schedule_planner` (matchup calendar, playoff-week schedules,
+  byes, light days for streaming).
 - Strategy: `power_rankings` (all-play record = true strength; luck),
   `waiver_upgrades`, `free_agents`, `trade_analyzer` (both sides' value and each
   team's best-lineup change), `team_schedule` (remaining strength of schedule),
@@ -288,6 +297,16 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         return run(lambda h: h.schedule_planner(league, team))
 
     @mcp.tool(annotations=READ_ONLY)
+    def season_outlook(league: LeagueArg = None, team: TeamArg = None) -> str:
+        """Football points leagues: simulates the rest of the regular season and the
+        playoff bracket from every team's roster (recent ESPN projections, byes,
+        injuries) and the live score of the current week. Returns the team's playoff,
+        bye and title odds, week-by-week win chances and bye holes, the final record
+        needed to make the playoffs, the free agents that most raise its lineup, and
+        every team's odds and strength."""
+        return run(lambda h: h.season_outlook(league, team))
+
+    @mcp.tool(annotations=READ_ONLY)
     def matchup_projection(league: LeagueArg = None, team: TeamArg = None) -> str:
         """Basketball: projects where every category (or fantasy points) will end
         up this matchup from current totals + each team's remaining games, shows
@@ -403,13 +422,15 @@ def build_server(hub: Hub | None = None) -> FastMCP:
             "(respecting the league's pickup limit), and lineup decisions day by day."
         )
 
-    @mcp.prompt(title="Season outlook")
-    def season_outlook(league: str) -> str:
+    @mcp.prompt(title="Season outlook", name="season_outlook")
+    def season_outlook_prompt(league: str) -> str:
         """Playoff chances and long-term strategy."""
         return (
-            f"Give me a season outlook for league '{league}': standings, power_rankings (luck), team_schedule "
-            "(strength of remaining schedule), playoff odds and trade deadline from league_settings. Tell me "
-            "whether to buy or sell and the concrete moves that would most improve my playoff chances."
+            f"Give me a season outlook for league '{league}'. Read strategy_playbook first. Football: use "
+            "season_outlook (simulated playoff/bye/title odds, my week-by-week path, record needed, best adds), "
+            "then power_rankings and recent_transactions (pending trade offers). Basketball categories: use "
+            "category_strategy and schedule_planner. Tell me whether to buy or sell and the concrete moves that "
+            "would most improve my playoff and title chances, with the numbers."
         )
 
     @mcp.tool(annotations=READ_ONLY)
