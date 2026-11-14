@@ -625,9 +625,9 @@ class LeagueView:
 
     def _football_fields(self, row, wrap, ppe, p, week, ratings, detail):
         season = find_split(p, 0, 0, self.season)
-        proj = find_split(p, 1, 1, period=week)
-        actual = find_split(p, 0, 1, period=week)
-        last = find_split(p, 0, 1, period=week - 1) if week and week > 1 else None
+        proj = find_split(p, 1, 1, self.season, period=week)
+        actual = find_split(p, 0, 1, self.season, period=week)
+        last = find_split(p, 0, 1, self.season, period=week - 1) if week and week > 1 else None
         r0 = ratings.get("0") or {}
         total = (season or {}).get("appliedTotal")
         avg = (season or {}).get("appliedAverage")
@@ -925,7 +925,7 @@ class LeagueView:
                     pts = ppe.get("appliedStatTotal")
                 row["pts"] = rnd(pts, 2)
                 if self.is_football:
-                    proj = find_split(p, 1, 1, period=week) or (find_split(player_of(pe), 1, 1, period=week) if pe else None)
+                    proj = find_split(p, 1, 1, self.season, period=week) or (find_split(player_of(pe), 1, 1, self.season, period=week) if pe else None)
                     if proj:
                         row["proj"] = rnd(proj.get("appliedTotal"))
             if self.is_football:

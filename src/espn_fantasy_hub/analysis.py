@@ -26,7 +26,7 @@ def _value(view: LeagueView, wrap: dict, period: int) -> tuple[float | None, str
     p = player_of(wrap)
     ppe = ppe_of(wrap)
     if view.is_football:
-        proj = find_split(p, 1, 1, period=period)
+        proj = find_split(p, 1, 1, view.season, period=period)
         return (proj.get("appliedTotal") if proj else None), "projected pts"
     if not view.is_categories:
         for split_id, label in ((2, "15-day avg fpts"), (0, "season avg fpts")):

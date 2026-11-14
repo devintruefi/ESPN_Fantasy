@@ -37,7 +37,7 @@ def season_value(view: LeagueView, wrap: dict) -> float | None:
         s = find_split(p, 0, 0, view.season)
         if s and s.get("appliedAverage") and (s.get("appliedTotal") or 0) / max(s["appliedAverage"], 0.01) >= 2:
             return s["appliedAverage"]
-        proj = find_split(p, 1, 1, period=view.scoring_period)
+        proj = find_split(p, 1, 1, view.season, period=view.scoring_period)
         return proj.get("appliedTotal") if proj else (s or {}).get("appliedAverage")
     if not view.is_categories:
         s = find_split(p, 0, 0, view.season)
@@ -50,7 +50,7 @@ def recent_value(view: LeagueView, wrap: dict) -> float | None:
     """Recent form: football = this week's projection; basketball = last 15 days."""
     p = player_of(wrap)
     if view.is_football:
-        proj = find_split(p, 1, 1, period=view.scoring_period)
+        proj = find_split(p, 1, 1, view.season, period=view.scoring_period)
         return proj.get("appliedTotal") if proj else None
     if not view.is_categories:
         s = find_split(p, 0, 2, view.season)

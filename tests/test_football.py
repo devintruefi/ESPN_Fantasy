@@ -270,3 +270,19 @@ def test_pickups_status_shown(football_hub):
     team = football_hub.roster()["team"]
     assert team["pickups"]["pickups_this_matchup"] >= 0
     assert "add_limit" not in football_hub.league_settings()["waivers_and_free_agents"]  # unlimited league
+
+
+def test_player_card_ignores_last_seasons_weeks(football_hub):
+    """ESPN cards also carry last season's weekly splits; only this season's count."""
+    card = football_hub.player(name="tee higgins")
+    assert card["last_week_pts"] == 17.7  # 2026 week 9, not 2025 week 9 (29.6)
+    assert "pts" not in card["week"]  # week 10 not played yet
+    client = football_hub._handles[0].client
+    stats = client.d["card"]["players"][0]["player"]["stats"]
+    stats.insert(0, {"seasonId": 2025, "statSourceId": 0, "statSplitTypeId": 1, "scoringPeriodId": 10,
+                     "appliedTotal": 99.9, "stats": {"53": 9}})
+    stats.insert(0, {"seasonId": 2025, "statSourceId": 0, "statSplitTypeId": 1, "scoringPeriodId": 9,
+                     "appliedTotal": 88.8, "stats": {"53": 9}})
+    again = football_hub.player(name="tee higgins")
+    assert "pts" not in again["week"]
+    assert again["last_week_pts"] == 17.7
