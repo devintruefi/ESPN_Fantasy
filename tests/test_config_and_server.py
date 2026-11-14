@@ -98,5 +98,5 @@ def test_prompts(football_hub):
     mcp = build_server(football_hub)
     prompts = {p.name for p in asyncio.run(mcp.list_prompts())}
     assert {"daily_checkin", "waiver_plan", "trade_ideas", "matchup_gameplan", "season_outlook"} <= prompts
-    res = asyncio.run(mcp.get_prompt("waiver_plan", {"league": "Quorum"}))
-    assert "Quorum" in res.messages[0].content.text
+    res = asyncio.run(mcp.get_prompt("waiver_plan", {"league": "Work league"}))
+    assert "Work league" in res.messages[0].content.text
