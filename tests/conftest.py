@@ -59,6 +59,7 @@ class FakeClient:
         return self.d["pool"]
 
     def player_cards(self, player_ids, final_scoring_period, extra_splits=()):
+        self.calls.append(("cards", tuple(extra_splits)))
         return self.d["card"]
 
     def transactions(self, scoring_period):

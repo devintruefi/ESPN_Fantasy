@@ -322,3 +322,9 @@ def test_pick_player_disambiguates_shared_names():
 def test_player_card_with_team_hint(football_hub):
     out = football_hub.player(name="Tee Higgins (CIN)")
     assert out["name"] == "Tee Higgins"
+
+
+def test_player_card_requests_recent_weekly_projections(football_hub):
+    football_hub.player(name="tee higgins")
+    extra = next(c[1] for c in football_hub._handles[0].client.calls if c[0] == "cards")
+    assert extra == tuple(f"112026{w}" for w in range(6, 11))

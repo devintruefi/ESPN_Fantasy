@@ -449,7 +449,8 @@ class Hub:
                     "matches": [f"{m.get('fullName')} ({h.sport.pro_team(m.get('proTeamId'))})" for m in matches[:5]]}
         final = view.final_scoring_period or view.scoring_period
         if view.is_football:
-            extra = (f"11{view.season}{view.scoring_period}",)
+            # this week's projection plus the last 4 weeks', so the game log shows projected vs actual
+            extra = tuple(f"11{view.season}{w}" for w in range(max(1, view.scoring_period - 4), view.scoring_period + 1))
         else:
             extra = tuple(f"0{i}{view.season}" for i in (1, 2, 3))
         cards = h.client.player_cards([pick["id"]], final, extra)
