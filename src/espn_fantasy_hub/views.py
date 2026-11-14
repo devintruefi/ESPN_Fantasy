@@ -555,7 +555,13 @@ class LeagueView:
     def bball_stat_names(self) -> list[str]:
         if self.is_categories:
             names = [c["name"] for c in self.categories]
-            return names + [n for n in ("MIN", "GP") if n not in names]
+            # Shooting volume decides how much a player moves FG%/FT%.
+            volume = []
+            if "FG%" in names:
+                volume += ["FGM", "FGA"]
+            if "FT%" in names:
+                volume += ["FTM", "FTA"]
+            return names + [n for n in volume + ["MIN", "GP"] if n not in names]
         return BASKETBALL_CORE_STATS
 
     def _football_stat_line(self, split: dict | None, limit: int = 12) -> dict:
