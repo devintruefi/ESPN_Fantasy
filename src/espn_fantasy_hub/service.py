@@ -564,6 +564,11 @@ class Hub:
         day_word = "today" if not days_ahead else ("tomorrow" if int(days_ahead) == 1 else f"on {view.pro.period_date.get(period, 'that day')}")
         out = analysis.lineup_check(view, tid, entries, period, day_word)
         self._add_pickup_options(h, view, out["issues"], period)
+        if any(i.get("free_agent_options") for i in out["issues"]):
+            out["about_pickups"] = (
+                "Free agent options are streaming ideas only. A pickup needs a drop: only drop from the user's "
+                "rotation/streaming spots, never a core player just to gain one game. Ask the user if unsure."
+            )
         return self._header(h, view) | out
 
     def _add_pickup_options(self, h: LeagueHandle, view: LeagueView, issues: list[dict], period: int) -> None:
@@ -763,12 +768,32 @@ class Hub:
             warnings.append("This league uses FAAB and no bid was given, so the claim would bid $0.")
         if bid is not None and not view.uses_faab:
             warnings.append("This league doesn't use FAAB; the bid is ignored and waiver priority decides.")
+        comparison = None
+        if drop_w:
+            add_val = strategy.season_value(view, card)
+            drop_val = strategy.season_value(view, drop_w)
+            basis = strategy.value_labels(view)[0]
+            drop_name = player_of(drop_w).get("fullName")
+            comparison = {
+                "basis": basis,
+                "adding": {"name": pick.get("fullName"), "season_value": rnd(add_val, 2)},
+                "dropping": {"name": drop_name, "season_value": rnd(drop_val, 2)},
+            }
+            if drop_val is not None and (add_val is None or drop_val > add_val):
+                warnings.insert(
+                    0,
+                    f"CAUTION: {drop_name} has MORE season value than {pick.get('fullName')} "
+                    f"({basis}: {rnd(drop_val, 2)} vs {rnd(add_val, 2) if add_val is not None else 'n/a'}). "
+                    "Dropping him is probably a mistake unless he's one of the user's rotation spots.",
+                )
         steps = [f"{'Claim off waivers' if waiver else 'Add free agent'}: {pick.get('fullName')}"]
         if drop_w:
             steps.append(f"Drop: {player_of(drop_w).get('fullName')}")
         if waiver and view.uses_faab:
             steps.append(f"FAAB bid: ${int(bid or 0)} (you have ${view.team_overview(me).get('faab_left', '?')} left)")
         out: dict[str, Any] = self._header(h, view) | {"team": view.team_label(me), "changes": steps}
+        if comparison:
+            out["value_check"] = comparison
         if waiver:
             out["note"] = "Waiver claims process at the league's waiver time; this only submits the claim."
         if warnings:

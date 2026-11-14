@@ -153,3 +153,18 @@ def test_slot_swap_between_starters(football_hub):
     plan, steps, warnings = writes.plan_lineup(view, entries, moves={"Zach Charbonnet": "RB", "Bijan Robinson": "FLEX"})
     assert sorted(steps) == ["Bijan Robinson: RB → FLEX", "Zach Charbonnet: FLEX → RB"]
     assert not any("empty" in w for w in warnings)
+
+
+def test_add_player_warns_when_dropping_better_player(football_data, monkeypatch):
+    posted = []
+    hub = writable_hub(football_data, monkeypatch, posted)
+    football_data["card"]["players"][0]["onTeamId"] = 0
+    football_data["card"]["players"][0]["status"] = "FREEAGENT"
+    # Adding Tee Higgins (~17 pts/game) while dropping Bijan Robinson (~18.3) -> caution
+    prev = hub.add_player(add="Tee Higgins", drop="Bijan Robinson")
+    assert prev["warnings"][0].startswith("CAUTION: Bijan Robinson has MORE season value")
+    assert prev["value_check"]["dropping"]["season_value"] > prev["value_check"]["adding"]["season_value"]
+    # Dropping a weaker player -> no caution
+    prev = hub.add_player(add="Tee Higgins", drop="Tank Dell")
+    assert not any(w.startswith("CAUTION") for w in prev.get("warnings", []))
+    assert not posted
