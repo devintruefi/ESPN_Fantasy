@@ -897,7 +897,10 @@ class LeagueView:
         by_id_current = {e.get("playerId"): e for e in current_roster}
         players = []
         seen = set()
-        lineup = current_roster if (current and current_roster) else (period_roster or current_roster)
+        # Football matchups are one scoring period, and ESPN's period roster lists only
+        # the starters with no slots, so past weeks read the full roster for that week.
+        use_current = current or (self.is_football and bool(current_roster))
+        lineup = current_roster if (use_current and current_roster) else (period_roster or current_roster)
         period_by_id = {e.get("playerId"): e for e in period_roster}
         week = self._matchup_week(matchup_period)
         for e in sorted(lineup, key=self.slot_order):

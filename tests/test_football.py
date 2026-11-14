@@ -135,6 +135,14 @@ def test_scoreboard_and_matchup(football_hub):
     prev = small(football_hub.matchup(period=9))
     assert prev["status"] == "final"
     assert any(p.get("pts") for p in prev["you"]["lineup"])
+    # past weeks show the real lineup (slots, bench, that week's projections)
+    lineup = prev["you"]["lineup"]
+    slots = [p["slot"] for p in lineup]
+    assert slots.count("QB") == 1 and "BE" in slots and len(lineup) >= 14
+    starters = [p for p in lineup if p["slot"] not in ("BE", "IR")]
+    assert sum(1 for p in starters if p.get("proj")) >= 8
+    started_pts = sum(p.get("pts") or 0 for p in starters)
+    assert started_pts == pytest.approx(prev["you"]["score"], abs=0.5)
 
 
 def test_schedule(football_hub):
