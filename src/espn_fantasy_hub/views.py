@@ -1044,6 +1044,42 @@ class LeagueView:
 # --------------------------------------------------------------------------
 # player search
 # --------------------------------------------------------------------------
+_TEAM_HINT = re.compile(r"^(.*?)\s*[(\[]\s*([A-Za-z]{2,4})\s*[)\]]\s*$")
+
+
+def _owned(p: dict) -> float:
+    return num((p.get("ownership") or {}).get("percentOwned"))
+
+
+def pick_player(query: str, index: list[dict], team_label) -> tuple[dict | None, list[dict]]:
+    """Resolve a typed name to one player: ``(player, candidates)``.
+
+    Accepts a team hint, ``"Justin Jefferson (MIN)"``. When several players share
+    the exact name, the one on an NFL/NBA team who is far more widely rostered wins
+    (e.g. the star over a namesake with no team); otherwise ``player`` is None and
+    ``candidates`` lists the options, most likely first.
+    """
+    team = None
+    m = _TEAM_HINT.match(query or "")
+    if m:
+        query, team = m.group(1), m.group(2).upper()
+    matches = match_players(query, index, limit=10)
+    if team:
+        matches = [p for p in matches if str(team_label(p.get("proTeamId"))).upper() == team]
+    q = norm_name(query)
+    exact = [p for p in matches if norm_name(p.get("fullName", "")) == q]
+    pool = exact or matches
+    ranked = sorted(pool, key=lambda p: (p.get("proTeamId") not in (None, 0), _owned(p)), reverse=True)
+    if len(ranked) <= 1:
+        return (ranked[0] if ranked else None), ranked
+    if exact:
+        a, b = ranked[0], ranked[1]
+        a_team, b_team = a.get("proTeamId") not in (None, 0), b.get("proTeamId") not in (None, 0)
+        if (_owned(a) >= 1 and _owned(a) >= 10 * _owned(b)) or (a_team and not b_team and _owned(a) >= _owned(b)):
+            return a, ranked
+    return None, ranked
+
+
 def match_players(query: str, index: list[dict], limit: int = 5) -> list[dict]:
     q = norm_name(query)
     if not q:

@@ -26,7 +26,7 @@ from .views import (
     find_split,
     fmt_date,
     fmt_time,
-    match_players,
+    pick_player,
     ms_to_dt,
     player_of,
     ppe_of,
@@ -440,14 +440,12 @@ class Hub:
         view = self.view(h, ratings=True)
         if not name or not name.strip():
             raise UserError("Give a player name.")
-        matches = match_players(name, h.client.player_index())
+        pick, matches = pick_player(name, h.client.player_index(), h.sport.pro_team)
         if not matches:
             raise UserError(f"No player found matching {name!r}.")
-        exact = [m for m in matches if m.get("fullName", "").lower() == name.strip().lower()]
-        pick = exact[0] if len(exact) == 1 else (matches[0] if len(matches) == 1 else None)
         if pick is None:
-            return {"note": f"Several players match {name!r}; ask again with the full name.",
-                    "matches": [f"{m.get('fullName')} ({h.sport.pro_team(m.get('proTeamId'))})" for m in matches]}
+            return {"note": f"Several players match {name!r}; ask again with one of these exactly (team in brackets).",
+                    "matches": [f"{m.get('fullName')} ({h.sport.pro_team(m.get('proTeamId'))})" for m in matches[:5]]}
         final = view.final_scoring_period or view.scoring_period
         if view.is_football:
             extra = (f"11{view.season}{view.scoring_period}",)
@@ -832,12 +830,13 @@ class Hub:
 
     def add_player(self, league=None, add: str = "", drop: str | None = None, bid: int | None = None, confirm: bool = False) -> dict:
         h, view, me = self._write_context(league)
-        matches = match_players(add, h.client.player_index())
+        pick, matches = pick_player(add, h.client.player_index(), h.sport.pro_team)
         if not matches:
             raise UserError(f"No player found matching {add!r}.")
-        if len(matches) > 1 and not any(m.get("fullName", "").lower() == add.strip().lower() for m in matches):
-            raise UserError("Several players match: " + ", ".join(m.get("fullName") for m in matches) + ". Use the full name.")
-        pick = next((m for m in matches if m.get("fullName", "").lower() == add.strip().lower()), matches[0])
+        if pick is None:
+            raise UserError("Several players match: " + ", ".join(
+                f"{m.get('fullName')} ({h.sport.pro_team(m.get('proTeamId'))})" for m in matches[:5]
+            ) + ". Ask again with the name and team exactly as shown.")
         card = (h.client.player_cards([pick["id"]], view.final_scoring_period or view.scoring_period).get("players") or [{}])[0]
         status, owner = card.get("status"), card.get("onTeamId")
         if owner:

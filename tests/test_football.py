@@ -286,3 +286,31 @@ def test_player_card_ignores_last_seasons_weeks(football_hub):
     again = football_hub.player(name="tee higgins")
     assert "pts" not in again["week"]
     assert again["last_week_pts"] == 17.7
+
+
+def _idx(name, pid, team, owned):
+    return {"fullName": name, "id": pid, "proTeamId": team, "ownership": {"percentOwned": owned}}
+
+
+def test_pick_player_disambiguates_shared_names():
+    from espn_fantasy_hub.views import pick_player
+
+    labels = {16: "MIN", 5: "CLE", 33: "BAL", 0: "FA"}
+    label = lambda t: labels.get(t or 0, "FA")
+    index = [_idx("Justin Jefferson", 2, 5, 0.1), _idx("Justin Jefferson", 1, 16, 99.9),
+             _idx("Lamar Jackson", 3, 33, 99.8), _idx("Lamar Jackson", 4, 0, 0.0),
+             _idx("Mike Williams", 5, 16, 30.0), _idx("Mike Williams", 6, 5, 25.0)]
+    # a star and a namesake: the star wins
+    assert pick_player("Justin Jefferson", index, label)[0]["id"] == 1
+    assert pick_player("lamar jackson", index, label)[0]["id"] == 3
+    # a real tie stays ambiguous, most likely first, and a team hint settles it
+    pick, cands = pick_player("Mike Williams", index, label)
+    assert pick is None and [c["id"] for c in cands] == [5, 6]
+    assert pick_player("Mike Williams (CLE)", index, label)[0]["id"] == 6
+    assert pick_player("Justin Jefferson (CLE)", index, label)[0]["id"] == 2
+    assert pick_player("Mike Williams (DAL)", index, label) == (None, [])
+
+
+def test_player_card_with_team_hint(football_hub):
+    out = football_hub.player(name="Tee Higgins (CIN)")
+    assert out["name"] == "Tee Higgins"
