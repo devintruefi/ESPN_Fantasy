@@ -11,7 +11,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import analysis, strategy, writes
+from pathlib import Path
+
+from . import analysis, catmodel, strategy, writes
 from .config import LeagueConfig, Settings
 from .discovery import discover
 from .espn import EspnError, LeagueClient, LeagueNotFound
@@ -626,6 +628,96 @@ class Hub:
         if view.is_categories and not view.season_over:
             raw = h.client.scoreboard(view.current_matchup_period, view.scoring_period)
         return self._header(h, view) | strategy.category_report(view, tid, raw)
+
+    # ---- category-league brain ---------------------------------------------------
+    def _need_categories(self, view: LeagueView, tool: str) -> None:
+        if not view.is_categories:
+            raise UserError(f"{tool} is for category leagues; this league is scored by points. "
+                            "Use power_rankings, waiver_upgrades and trade_analyzer instead.")
+
+    def category_strategy(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        self._need_categories(view, "category_strategy")
+        tid = self._team(view, team)
+        pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
+        return self._header(h, view) | {"team": view.team_label(tid)} | catmodel.category_strategy(view, pool, tid)
+
+    def player_values(self, league=None, punt=None, who: str = "all", limit: int = 30, recent: bool = False) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        self._need_categories(view, "player_values")
+        pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
+        who = who if who in ("all", "free", "rostered") else "all"
+        return self._header(h, view) | catmodel.player_values(view, pool, punt, who, max(1, min(int(limit), 60)), recent)
+
+    def schedule_planner(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        tid = self._team(view, team)
+        if view.is_football:
+            return self._header(h, view) | strategy.football_schedule(view, tid)
+        return self._header(h, view) | {"team": view.team_label(tid)} | catmodel.schedule_planner(view, tid)
+
+    def strategy_playbook(self, league=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        s = view.settings_view()
+        acq = s.get("waivers_and_free_agents") or {}
+        trades = s.get("trades") or {}
+        sched = s.get("schedule") or {}
+        if view.is_football:
+            name = "football_points.md"
+        elif view.is_categories:
+            name = "basketball_categories.md"
+        else:
+            name = "basketball_points.md"
+        path = Path(__file__).parent / "playbooks" / name
+        if not path.exists():
+            raise UserError("No playbook for this league type yet.")
+        cats = ", ".join(c["name"] for c in view.categories)
+        need = len(view.categories) // 2 + 1
+        if view.scoring_type == "H2H_MOST_CATEGORIES":
+            fmt = (f"Head-to-head MOST categories: each week is a single win or loss for taking a majority "
+                   f"({need} of {len(view.categories)}) of: {cats}. Margins don't matter.")
+        elif view.scoring_type == "H2H_CATEGORY":
+            fmt = f"Head-to-head EACH category: every category ({cats}) is its own win/loss each week."
+        elif view.scoring_type == "ROTO":
+            fmt = f"Rotisserie: season totals ranked in each of {cats}; punting is much weaker here."
+        else:
+            fmt = f"{s.get('format')}."
+        playoff = f"{sched.get('playoff_teams', '?')} teams make the playoffs after {sched.get('regular_season_matchups', '?')} regular-season matchups."
+        if not view.is_football:
+            cal = {u["unit"]: u for u in catmodel.nba_calendar(view)}
+            reg = view.reg_season_periods or 0
+            spans = []
+            for mp in sorted(view.matchup_periods):
+                if mp > reg:
+                    units = [cal[u] for u in view.matchup_periods[mp] if u in cal]
+                    if units:
+                        spans.append(f"{units[0]['start']:%b %d}-{units[-1]['end']:%b %d}")
+            if spans:
+                playoff += " Playoff weeks: " + ", ".join(spans) + "."
+        fill = {
+            "format_line": fmt,
+            "pickup_line": f"Pickup limit: {acq['add_limit']}." if acq.get("add_limit") else "No weekly pickup limit.",
+            "waiver_line": (
+                f"Waivers: {acq.get('type', '?')}"
+                + (f", FAAB budget ${acq['faab_budget']}" if acq.get("faab_budget") else ", waiver priority order")
+                + (f"; claims process {'/'.join(d.title()[:3] for d in acq.get('process_days', []))}" if acq.get("process_days") else "")
+                + ". Players you drop sit on waivers before others can add them."
+            ),
+            "trade_line": (
+                f"Trade deadline: {trades.get('deadline', 'none set')}. Trades are reviewed for {trades.get('review_hours', 0)}h"
+                + (f" and {trades['veto_votes_required']} veto votes kill a deal, so offers must look fair to the league."
+                   if trades.get("veto_votes_required") else ".")
+            ),
+            "playoff_line": playoff,
+        }
+        text = path.read_text(encoding="utf-8")
+        for k, v in fill.items():
+            text = text.replace("{" + k + "}", v)
+        return self._header(h, view) | {"playbook": text}
 
     def matchup_projection(self, league=None, team=None) -> dict:
         h = self.resolve(league)

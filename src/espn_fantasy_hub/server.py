@@ -41,6 +41,10 @@ How to give good advice:
   number. Use `matchup_projection` to see which categories are winnable or lost
   this week and `category_report` for season strengths/weaknesses and punts.
   Respect the league's pickup limit (shown as `pickups`).
+- Season strategy: read `strategy_playbook` for the league's format, then use
+  `category_strategy` (category leagues: build, core vs rotation spots, best-fit
+  pickups), `player_values` (G-score rankings, punt-aware) and `schedule_planner`
+  (matchup calendar, playoff-week schedules, light days for streaming).
 - Strategy: `power_rankings` (all-play record = true strength; luck),
   `waiver_upgrades`, `free_agents`, `trade_analyzer` (both sides' value and each
   team's best-lineup change), `team_schedule` (remaining strength of schedule),
@@ -246,6 +250,42 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         weaknesses, punt candidates) and which categories are swingable in the
         current matchup."""
         return run(lambda h: h.category_report(league, team))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def strategy_playbook(league: LeagueArg = None) -> str:
+        """The research-based playbook for this league's format, filled in with the
+        league's actual rules (format, pickup limits, waivers, trade deadline, playoff
+        weeks). Read it before giving season-level strategy advice."""
+        return run(lambda h: h.strategy_playbook(league))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def category_strategy(league: LeagueArg = None, team: TeamArg = None) -> str:
+        """Category leagues: the team's odds in each category now and at full strength,
+        which categories to build around or concede, every player's value to the team
+        (core vs rotation spots), model strength of all teams, and the free agents that
+        most raise THIS team's weekly win odds (with who they'd replace)."""
+        return run(lambda h: h.category_strategy(league, team))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def player_values(
+        league: LeagueArg = None,
+        punt: Annotated[list[str] | None, Field(description="Categories to ignore, e.g. ['TO', 'FT%'].")] = None,
+        who: Annotated[str, Field(description="all, free (free agents/waivers) or rostered")] = "all",
+        limit: Annotated[int, Field(ge=1, le=60)] = 30,
+        recent: Annotated[bool, Field(description="Use the last 15 days instead of the season")] = False,
+    ) -> str:
+        """Category leagues: player rankings by G-score (per-game z-scores discounted for
+        week-to-week noise), optionally ignoring punted categories, with the per-category
+        breakdown. Use for trade and pickup evaluation."""
+        return run(lambda h: h.player_values(league, punt, who, limit, recent))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def schedule_planner(league: LeagueArg = None, team: TeamArg = None) -> str:
+        """Season calendar for planning: each remaining matchup's dates and how many games
+        your players have vs average, the NBA teams with the best playoff-week schedules,
+        and the next two weeks' light days (open lineup slots) for streaming.
+        Football: bye weeks of your players by week and playoff-week outlook."""
+        return run(lambda h: h.schedule_planner(league, team))
 
     @mcp.tool(annotations=READ_ONLY)
     def matchup_projection(league: LeagueArg = None, team: TeamArg = None) -> str:

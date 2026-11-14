@@ -613,3 +613,37 @@ def matchup_projection(view: LeagueView, raw: dict, team_id: int) -> dict:
         "Matchup assumed to end Sunday."
     )
     return out
+
+
+# --------------------------------------------------------------------------
+# football schedule
+# --------------------------------------------------------------------------
+
+
+def football_schedule(view: LeagueView, team_id: int) -> dict:
+    """Byes and games per remaining week for a football roster, with playoff weeks."""
+    entries = view.roster_entries(team_id)
+    reg = view.reg_season_periods or 0
+    weeks_by_period = {mp: ws for mp, ws in view.matchup_periods.items()}
+    playoff_weeks = sorted({w for mp, ws in weeks_by_period.items() if mp > reg for w in ws})
+    last = max([view.final_scoring_period or 0] + playoff_weeks)
+    rows = []
+    for w in range(view.scoring_period, last + 1):
+        on_bye = []
+        for e in entries:
+            if e.get("lineupSlotId") == view.sport.ir_slot:
+                continue
+            p = player_of(e)
+            if view.pro.game(p.get("proTeamId"), w) is None:
+                on_bye.append(f"{p.get('fullName')} ({view.sport.position(p)})")
+        rows.append(compact({
+            "week": w,
+            "playoffs": True if w in playoff_weeks else None,
+            "players_without_a_game": on_bye or None,
+        }))
+    return {
+        "team": view.team_label(team_id),
+        "regular_season_weeks": reg,
+        "playoff_weeks": playoff_weeks,
+        "weeks": rows,
+    }
