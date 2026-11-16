@@ -72,7 +72,18 @@ def test_trade_history_reads_players_from_the_proposal(football_hub, football_da
         {"type": "TRADE", "playerId": 10, "fromTeamId": 2, "toTeamId": 3},
         {"type": "TRADE", "playerId": 11, "fromTeamId": 3, "toTeamId": 2}]}
     out = intel.league_intel(view, 1, [{"transactions": [accept, proposal]}], {10: "Player Ten", 11: "Player Eleven"})
-    gets = out["trades_this_season"][0]["gets"]
+    gets = next(t["gets"] for t in out["trades_this_season"] if "Player Ten" in str(t["gets"]))
     assert gets == {view.team_label(3): ["Player Ten"], view.team_label(2): ["Player Eleven"]}
     row = next(r for r in out["managers"] if r["team"] == view.team_label(2))
     assert row["traded_with"] == {view.team_label(3): 1}
+
+
+def test_trades_rebuilt_from_rosters(football_hub):
+    """The saved league has three trades visible on rosters (shared acquisition stamps)."""
+    out = football_hub.league_intel()
+    trades = out["trades_this_season"]
+    assert isinstance(trades, list) and len(trades) >= 3
+    golden = next(t for t in trades if any("Matthew Golden" in v for v in t["gets"].values()))
+    assert len(golden["gets"]) == 2   # both sides of the deal
+    me = next(r for r in out["managers"] if r["team"].endswith("(you)"))
+    assert me["traded_with"]

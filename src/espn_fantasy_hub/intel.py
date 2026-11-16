@@ -51,6 +51,22 @@ def _trade_items(tx: dict, by_id: dict) -> list[dict]:
     return items
 
 
+def roster_trades(view: LeagueView) -> list[dict]:
+    """Trades rebuilt from rosters: ESPN stamps every player who arrived by trade with the
+    trade's time, so players sharing a stamp were one deal. Players since dropped don't show."""
+    groups: dict[int, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
+    for tid in view.teams:
+        for e in view.roster_entries(tid):
+            if e.get("acquisitionType") == "TRADE" and e.get("acquisitionDate"):
+                groups[e["acquisitionDate"]][tid].append(player_of(e).get("fullName") or f"player {e.get('playerId')}")
+    rows = []
+    for stamp, sides in sorted(groups.items()):
+        when = ms_to_dt(stamp, view.pro.now.tzinfo)
+        rows.append({"date": f"{when:%b %d}" if when else None, "_ms": stamp,
+                     "gets": {view.team_label(t): sorted(n) for t, n in sides.items()}, "_teams": set(sides)})
+    return rows
+
+
 def _trades(view: LeagueView, txs: list[dict], by_id: dict, names: dict) -> list[dict]:
     rows = []
     for tx in txs:
@@ -62,8 +78,9 @@ def _trades(view: LeagueView, txs: list[dict], by_id: dict, names: dict) -> list
         if not gets:
             teams = {view.team_label(tx.get("teamId"))} if tx.get("teamId") else set()
             gets = {t: ["(players not in ESPN's activity log)"] for t in teams}
-        when = ms_to_dt(tx.get("processDate") or tx.get("proposedDate"), view.pro.now.tzinfo)
-        rows.append({"date": f"{when:%b %d}" if when else None, "period": tx.get("scoringPeriodId"), "gets": dict(gets)})
+        ms = tx.get("processDate") or tx.get("proposedDate")
+        when = ms_to_dt(ms, view.pro.now.tzinfo)
+        rows.append({"date": f"{when:%b %d}" if when else None, "_ms": ms, "gets": dict(gets)})
     return rows
 
 
@@ -164,7 +181,14 @@ def _fit_score(mine: dict, theirs: dict) -> float:
 def league_intel(view: LeagueView, me, tx_raws: list[dict], names: dict, odds: dict | None = None,
                  needs: dict | None = None, periods_covered: str = "") -> dict:
     txs, by_id = parse_transactions(tx_raws)
-    trades = _trades(view, txs, by_id, names)
+    rebuilt = roster_trades(view)
+    trades = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rebuilt]
+    day = 36 * 3600 * 1000
+    for t in _trades(view, txs, by_id, names):   # trades whose players have all left the rosters
+        ms = t.pop("_ms", None)
+        if not any(ms and abs(ms - r["_ms"]) < day for r in rebuilt) and not any(
+                "(players not in" in str(v) for v in t["gets"].values()):
+            trades.append(t)
     bids = faab_bids(view, txs, names)
     recent_cut = view.scoring_period - (2 if view.is_football else 7)
     recent: dict[int, list[str]] = defaultdict(list)
@@ -176,12 +200,16 @@ def league_intel(view: LeagueView, me, tx_raws: list[dict], names: dict, odds: d
                 elif it.get("type") == "DROP":
                     recent[tx.get("teamId")].append("-" + _name(names, it.get("playerId")))
     partners: dict[int, Counter] = defaultdict(Counter)
+    deals = [r["_teams"] for r in rebuilt]
     for tx in txs:
         if tx.get("type") in ("TRADE_ACCEPT", "TRADE_UPHOLD"):
             sides = {it.get("toTeamId") for it in _trade_items(tx, by_id)}
-            for a in sides:
-                for b in sides - {a}:
-                    partners[a][view.team_label(b)] += 1
+            if sides and sides not in deals:
+                deals.append(sides)
+    for sides in deals:
+        for a in sides:
+            for b in sides - {a}:
+                partners[a][view.team_label(b)] += 1
     remaining_vs_me = defaultdict(list)
     for g in view.core.get("schedule") or []:
         mp = g.get("matchupPeriodId") or 0
@@ -248,7 +276,7 @@ def league_intel(view: LeagueView, me, tx_raws: list[dict], names: dict, odds: d
         "covering": periods_covered,
         "managers": rows,
         "trade_targets": targets or None,
-        "trades_this_season": trades or "none yet",
+        "trades_this_season": trades or "none found",
         "faab": faab_summary(bids, budget) if budget else None,
         "most_active": [r["team"] for r in sorted(rows, key=lambda r: -(r.get("moves_last_3_matchups") or 0))[:3]],
         "how_to_use": "Needs/surplus come from each team's projected starters (football: position ranks, 1 = best; "
