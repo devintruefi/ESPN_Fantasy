@@ -14,7 +14,7 @@ from typing import Any
 
 from pathlib import Path
 
-from . import analysis, catmodel, catseason, ffmodel, intel, projections, strategy, trades, writes
+from . import analysis, catmodel, catseason, external, ffmodel, insights, intel, projections, strategy, trades, writes
 from .config import LeagueConfig, Settings
 from .discovery import discover
 from .espn import EspnError, LeagueClient, LeagueNotFound
@@ -27,6 +27,7 @@ from .views import (
     find_split,
     fmt_date,
     fmt_time,
+    norm_name as views_norm,
     pick_player,
     ms_to_dt,
     num,
@@ -741,10 +742,8 @@ class Hub:
         with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
             return list(pool.map(fn, items))
 
-    def league_intel(self, league=None) -> dict:
-        h = self.resolve(league)
-        view = self.view(h)
-        me = self._team(view, None)
+    def _all_transactions(self, h: LeagueHandle, view: LeagueView) -> tuple[list[int], list[dict]]:
+        """Every period's transactions this season (basketball: the last 28 days), in parallel."""
         cur = view.scoring_period
         periods = list(range(1, cur + 1)) if view.is_football else list(range(max(1, cur - 27), cur + 1))
 
@@ -754,7 +753,14 @@ class Hub:
             except EspnError:
                 return {}
 
-        raws = self._parallel(fetch, periods)
+        return periods, self._parallel(fetch, periods)
+
+    def league_intel(self, league=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        me = self._team(view, None)
+        cur = view.scoring_period
+        periods, raws = self._all_transactions(h, view)
         ids = {it.get("playerId") for r in raws for tx in r.get("transactions") or [] for it in tx.get("items") or []}
         ids |= {int(pid) for t in view.teams.values() for pid in ((t.get("tradeBlock") or {}).get("players") or {})}
         names = self._names(h, ids, view.final_scoring_period)
@@ -791,6 +797,206 @@ class Hub:
         past = {mp: raw for mp, raw in self._parallel(fetch, range(1, cur)) if raw}
         sd, bias, _ = ffmodel.score_noise(view, list(past.values()))
         return self._header(h, view) | intel.football_track_record(view, me, past, sd, bias)
+
+    # ---- outside data ------------------------------------------------------------------
+    def _league_players(self, h: LeagueHandle, view: LeagueView, pool=None) -> dict[int, dict]:
+        """Every rostered player plus the top free agents: {id: name, pos, team, owner, waivers}."""
+        out: dict[int, dict] = {}
+        for tid in view.teams:
+            for e in view.roster_entries(tid):
+                p = player_of(e)
+                out[p.get("id")] = {"name": p.get("fullName"), "pos": view.sport.position(p),
+                                    "nfl": view.sport.pro_team(p.get("proTeamId")), "owner": tid}
+        if pool is None:
+            pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
+        for w in pool:
+            p = player_of(w)
+            if p.get("id") not in out:
+                out[p.get("id")] = {"name": p.get("fullName"), "pos": view.sport.position(p),
+                                    "nfl": view.sport.pro_team(p.get("proTeamId")), "owner": "FA",
+                                    "waivers": ppe_of(w).get("status") == "WAIVERS"}
+        return out
+
+    def _sleeper_to_espn(self, view: LeagueView, league_players: dict):
+        """A resolver from Sleeper player id to ESPN id (NFL: id map; NBA: name + team)."""
+        if view.is_football:
+            idx = insights.nfl_index(external.nfl_id_map())
+            return idx["sleeper"].get, bool(idx["sleeper"])
+        directory = external.sleeper_players("nba") or {}
+        by_name: dict[str, list[int]] = {}
+        for pid, p in league_players.items():
+            by_name.setdefault(views_norm(p["name"] or ""), []).append(pid)
+
+        def resolve(sid):
+            sp = directory.get(str(sid)) or {}
+            hits = by_name.get(views_norm(sp.get("full_name") or ""), [])
+            if len(hits) > 1 and sp.get("team"):
+                hits = [i for i in hits if (league_players[i].get("nfl") or "").upper() == sp["team"].upper()] or hits
+            return hits[0] if len(hits) == 1 else None
+
+        return resolve, bool(directory)
+
+    def market_trends(self, league=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        sport = "nfl" if view.is_football else "nba"
+        adds, drops = external.sleeper_trending(sport, "add"), external.sleeper_trending(sport, "drop")
+        if adds is None and drops is None:
+            raise UserError("Sleeper's trending data is unavailable right now; try again later.")
+        players = self._league_players(h, view)
+        resolve, ok = self._sleeper_to_espn(view, players)
+        out = insights.market_trends(view, adds, drops, resolve, players)
+        if not ok:
+            out["note"] += " (Player matching data was unavailable, so some players couldn't be named.)"
+        return self._header(h, view) | {"source": "Sleeper (all leagues, last 24 hours)"} | out
+
+    def player_usage(self, league=None, team=None, players=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        self._need_football_points(view, "player_usage")
+        tid = self._team(view, team)
+        world = self.football_world(h, view)
+        weekly = external.nflverse_weekly(view.season)
+        if weekly is None:
+            raise UserError("nflverse usage data is unavailable right now; try again later.")
+        snaps = external.nflverse_snaps(view.season)
+        idx = insights.nfl_index(external.nfl_id_map())
+        mine = world.team(tid)
+        extra = []
+        for n in players or []:
+            p = world.by_name(n)
+            if p is None:
+                raise UserError(f"Couldn't match {n!r} to one player in this league's pool.")
+            extra.append(p)
+        fas = sorted((world.players[i] for i in world.free_agents if world.players[i]["pos"] in ("QB", "RB", "WR", "TE")),
+                     key=lambda p: -p["base"])[:40]
+        table = {r["player"]: r for r in insights.usage_table(weekly, snaps, idx, mine + extra + fas)}
+        rising = [table[p["name"]] for p in fas if p["name"] in table
+                  and any("rising" in f for f in table[p["name"]].get("flags") or [])]
+        return self._header(h, view) | compact({
+            "team": view.team_label(tid),
+            "your_players": [table[p["name"]] for p in mine if p["name"] in table] or None,
+            "asked_about": [table[p["name"]] for p in extra if p["name"] in table] or None,
+            "free_agents_with_growing_roles": rising[:10] or None,
+            "how_to_read": "Each 'a / b' is season average / last 3 games. Volume (snaps, targets, target share, "
+                           "carries) is stable and predictive; touchdowns mostly aren't, so a TD-dependent player "
+                           "is a sell and volume without TDs is a buy.",
+            "source": "nflverse weekly stats and snap counts" + ("" if snaps else " (snap counts unavailable)"),
+        })
+
+    def _target_week(self, view: LeagueView) -> tuple[int, dict | None]:
+        """The NFL week to plan for: this week if any game hasn't kicked off, else next week."""
+        week = view.scoring_period
+        sb = external.nfl_scoreboard(view.season, week)
+        statuses = [g["status"] for g in insights.game_lines(sb)["games"]]
+        if sb is not None and statuses and "STATUS_SCHEDULED" not in statuses:
+            week += 1
+            sb = external.nfl_scoreboard(view.season, week)
+        return week, sb
+
+    def game_environment(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        tid = self._team(view, team)
+        if not view.is_football:
+            return self._header(h, view) | self._nba_environment(h, view, tid)
+        week, sb = self._target_week(view)
+        if sb is None:
+            raise UserError("ESPN's game lines are unavailable right now; try again later.")
+        lines = insights.game_lines(sb)
+        points = insights.weather_points(lines["games"])
+        forecasts = external.weather([pt for _, pt in points]) if points else []
+        fc = {gid: f for (gid, _), f in zip(points, forecasts or [])}
+        mine_by_team: dict[int, list[str]] = {}
+        for e in view.roster_entries(tid):
+            p = player_of(e)
+            if view.sport.is_starting_slot(e.get("lineupSlotId")) or e.get("lineupSlotId") == view.sport.bench_slot:
+                mine_by_team.setdefault(p.get("proTeamId"), []).append(p.get("fullName"))
+        games = []
+        for g in sorted(lines["games"], key=lambda g: -(g.get("total") or 0)):
+            games.append(compact({
+                "game": f"{g['away']} @ {g['home']}", "kickoff_utc": g["start"],
+                "line": f"{g['home']} {g['spread']:+g}" if g.get("spread") is not None else None,
+                "total": g.get("total"),
+                "implied_points": f"{g['away']} {g['away_implied']} / {g['home']} {g['home_implied']}" if "home_implied" in g else None,
+                "indoor": True if g["indoor"] else None,
+                "weather": insights.weather_flags(g, fc.get(g["id"])) if g["id"] in fc else None,
+                "your_players": (mine_by_team.get(g["home_id"], []) + mine_by_team.get(g["away_id"], [])) or None,
+            }))
+        out = {"week": week, "games": games,
+               "teams_on_bye": [view.sport.pro_team(t) for t in lines["byes"]] or None,
+               "source": "ESPN game lines (DraftKings) and Open-Meteo forecasts"
+                         + (" (forecasts unavailable)" if points and forecasts is None else "")}
+        if not view.is_categories:
+            world = self.football_world(h, view)
+            out["dst_streaming"] = insights.dst_board(view, world, lines, week, tid)
+        out["how_to_read"] = ("Implied points = each team's expected score from the spread and total: higher means more "
+                              "scoring chances for its players, lower is better for the defense facing it. ESPN "
+                              "projections already price most of this; use it to break close start/sit calls.")
+        return self._header(h, view) | compact(out)
+
+    def _nba_environment(self, h: LeagueHandle, view: LeagueView, tid) -> dict:
+        today = view.pro.today
+        mine_by_team: dict[int, list[str]] = {}
+        for e in view.roster_entries(tid):
+            p = player_of(e)
+            mine_by_team.setdefault(p.get("proTeamId"), []).append(p.get("fullName"))
+        days = []
+        for d in (today, today + dt.timedelta(days=1)):
+            lines = insights.game_lines(external.nba_scoreboard(d))
+            games = []
+            for g in sorted(lines["games"], key=lambda g: -(g.get("total") or 0)):
+                games.append(compact({
+                    "game": f"{g['away']} @ {g['home']}", "total": g.get("total"),
+                    "line": f"{g['home']} {g['spread']:+g}" if g.get("spread") is not None else None,
+                    "blowout_risk": True if g.get("spread") is not None and abs(g["spread"]) >= 12 else None,
+                    "your_players": (mine_by_team.get(g["home_id"], []) + mine_by_team.get(g["away_id"], [])) or None,
+                }))
+            days.append({"date": f"{d:%a %b %d}", "games": games or "no games or lines yet"})
+        return {"days": days, "how_to_read": "Higher totals mean faster, higher-scoring games (more counting stats); "
+                "a 12+ point spread risks a blowout with fewer minutes for starters."}
+
+    def waiver_plan(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        tid = self._team(view, team)
+        pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
+        players = self._league_players(h, view, pool)
+        trending: set = set()
+        adds = external.sleeper_trending("nfl" if view.is_football else "nba", "add")
+        if adds:
+            resolve, _ = self._sleeper_to_espn(view, players)
+            trending = {resolve(str(a.get("player_id"))) for a in adds[:30]} - {None}
+        if view.is_categories:
+            strat = catmodel.category_strategy(view, pool, tid)
+            picks = strat.get("best_pickups_for_you") or []
+            ids = {p["name"]: i for i, p in players.items()}
+            for r in picks:
+                if ids.get(r["name"]) in trending:
+                    r["trending_on_sleeper"] = True
+            sched = catmodel.schedule_planner(view, tid)
+            return self._header(h, view) | compact({
+                "team": view.team_label(tid),
+                "rotation_spots": strat.get("rotation_spots"),
+                "best_moves": picks or "No free agent beats your rotation spots right now.",
+                "best_streaming_days": sched.get("best_streaming_days"),
+                "rules": ["Only your two rotation spots (worth least over a typical free agent) are suggested as "
+                          "drops; core players are never.", "Weekly win % gains come from the league's calibrated "
+                          "category model; pick up for the days you have open slots."],
+            })
+        self._need_football_points(view, "waiver_plan")
+        world = self.football_world(h, view)
+        faab = left = None
+        if view.uses_faab:
+            _, raws = self._all_transactions(h, view)
+            txs, _ = intel.parse_transactions(raws)
+            ids = {it.get("playerId") for tx in txs for it in tx.get("items") or []}
+            faab = intel.faab_summary(intel.faab_bids(view, txs, self._names(h, ids, view.final_scoring_period)),
+                                      view.faab_budget)
+            spent = num((view.teams.get(tid, {}).get("transactionCounter") or {}).get("acquisitionBudgetSpent"))
+            left = view.faab_budget - spent
+        out = insights.waiver_plan_football(world, tid, faab, left, trending)
+        return self._header(h, view) | {"team": view.team_label(tid)} | compact(out)
 
     def strategy_playbook(self, league=None) -> dict:
         h = self.resolve(league)

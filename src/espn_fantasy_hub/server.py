@@ -373,6 +373,45 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         Basketball: category win rates for you and the league."""
         return run(lambda h: h.track_record(league))
 
+    @mcp.tool(annotations=READ_ONLY)
+    def market_trends(league: LeagueArg = None) -> str:
+        """Who fantasy managers everywhere are adding and dropping in the last 24 hours
+        (Sleeper), matched to this league: free agent, on waivers, or which team has him.
+        Flags trending players you can get and your players others are dropping. A read
+        on news and demand: check the reason before acting."""
+        return run(lambda h: h.market_trends(league))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def player_usage(
+        team: TeamArg = None,
+        players: Annotated[list[str] | None, Field(description="Other players to look up.")] = None,
+        league: LeagueArg = None,
+    ) -> str:
+        """Football: real NFL usage from nflverse for your players (or a team's), any
+        players you name, and free agents whose role is growing: snap share, targets,
+        target share, air-yards share, carries (season vs last 3 games), touchdown share
+        of points, and buy/sell flags (volume without TDs = buy, TD-dependent = sell)."""
+        return run(lambda h: h.player_usage(league, team, players))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def game_environment(team: TeamArg = None, league: LeagueArg = None) -> str:
+        """Football: the coming week's Vegas lines (spread, total, each team's implied
+        points), byes, indoor/outdoor and stadium weather (wind, rain/snow, cold) around
+        kickoff, which of your players are in each game, and a D/ST streaming board (ESPN
+        projection plus the opponent's implied points). Basketball: today's and
+        tomorrow's NBA totals and spreads (pace, blowout risk) with your players."""
+        return run(lambda h: h.game_environment(league, team))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def waiver_advisor(team: TeamArg = None, league: LeagueArg = None) -> str:
+        """The week's pickup plan. Football: free agents ranked by how much they raise
+        your starting lineup (rest of season and playoff weeks), each paired with the
+        cheapest drop from your rotation spots (never a regular starter or a stash), a
+        FAAB bid based on this league's winning bids, and Sleeper trending flags.
+        Basketball: category pickups by weekly win % gain, rotation spots and the best
+        streaming days. Read-only: use add_player to act."""
+        return run(lambda h: h.waiver_plan(league, team))
+
     # ---- moves --------------------------------------------------------------------
     @mcp.tool(annotations=WRITE)
     def set_lineup(
