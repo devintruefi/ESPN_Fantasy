@@ -57,4 +57,22 @@ def test_track_record_categories(basketball_hub):
     out = basketball_hub.track_record()
     rates = out["your_category_win_rate_pct"]
     assert rates and all(0 <= v <= 100 for v in rates.values())
+    assert set(out["your_rank_by_category"]) == set(rates)
+    assert all(1 <= r <= 10 for r in out["your_rank_by_category"].values())
     assert {w["result"] for w in out["your_matchups"]} <= {"W", "L", "T"}
+
+
+def test_trade_history_reads_players_from_the_proposal(football_hub, football_data):
+    """ESPN keeps an accepted trade's players on the related proposal, not on the acceptance."""
+    import copy
+    view = football_hub.view(football_hub._handles[0])
+    accept = {"id": "a1", "type": "TRADE_ACCEPT", "status": "EXECUTED", "relatedTransactionId": "p1", "processDate": 1,
+              "scoringPeriodId": 4, "items": [{"type": "DROP", "playerId": 1, "fromTeamId": 2, "toTeamId": 0}]}
+    proposal = {"id": "p1", "type": "TRADE_PROPOSAL", "status": "ACCEPTED", "scoringPeriodId": 4, "items": [
+        {"type": "TRADE", "playerId": 10, "fromTeamId": 2, "toTeamId": 3},
+        {"type": "TRADE", "playerId": 11, "fromTeamId": 3, "toTeamId": 2}]}
+    out = intel.league_intel(view, 1, [{"transactions": [accept, proposal]}], {10: "Player Ten", 11: "Player Eleven"})
+    gets = out["trades_this_season"][0]["gets"]
+    assert gets == {view.team_label(3): ["Player Ten"], view.team_label(2): ["Player Eleven"]}
+    row = next(r for r in out["managers"] if r["team"] == view.team_label(2))
+    assert row["traded_with"] == {view.team_label(3): 1}

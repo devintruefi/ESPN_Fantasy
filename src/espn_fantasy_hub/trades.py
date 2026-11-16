@@ -41,8 +41,30 @@ def resolve(world: FootballWorld, names: list[str], tid=None) -> list[dict]:
     return out
 
 
+def replacements(world: FootballWorld) -> list[dict]:
+    """The best healthy free agent at each position, available to every team. A trade that
+    leaves a hole (no D/ST, a thin bench) is then judged against a waiver pickup, not an empty
+    slot. Shown as '<name> (free agent)'."""
+    cache = world.__dict__.get("_replacements")
+    if cache is None:
+        best: dict[str, dict] = {}
+        for pid in world.free_agents:
+            p = world.players[pid]
+            if p["status"] in ("OUT", "INJURY_RESERVE", "SUSPENSION") or not p["slots"]:
+                continue
+            if p["pos"] not in best or p["base"] > best[p["pos"]]["base"]:
+                best[p["pos"]] = p
+        cache = world.__dict__["_replacements"] = [dict(p, name=f"{p['name']} (free agent)") for p in best.values()]
+    return cache
+
+
+def team_plus(world: FootballWorld, tid) -> list[dict]:
+    """A team's roster plus the free-agent replacements (for lineup math in trades)."""
+    return world.team(tid) + replacements(world)
+
+
 def _after(world: FootballWorld, me, partner, give: list[dict], get: list[dict]) -> dict[int, list[dict]]:
-    rosters = world.all_rosters()
+    rosters = {t: team_plus(world, t) for t in world.view.teams}
     gi, ri = {p["id"] for p in give}, {p["id"] for p in get}
     rosters[me] = [p for p in rosters[me] if p["id"] not in gi] + list(get)
     rosters[partner] = [p for p in rosters[partner] if p["id"] not in ri] + list(give)
@@ -53,7 +75,7 @@ def _base(world: FootballWorld, sims: int) -> dict:
     """Stress-test strengths and odds with today's rosters, cached on the world."""
     cache = world.__dict__.setdefault("_trade_base", {})
     if sims not in cache:
-        rosters = world.all_rosters()
+        rosters = {t: team_plus(world, t) for t in world.view.teams}
         out = {}
         for sc in SCENARIOS:
             STR = world.strengths(rosters, sc["value"], sc["injury"])
@@ -67,7 +89,7 @@ def _lineup_scores(world: FootballWorld) -> dict:
     if not cache:
         for t in world.view.teams:
             for mode in ("proj", "avg"):
-                cache[(t, mode)] = world.lineup_score(world.team(t), mode)
+                cache[(t, mode)] = world.lineup_score(team_plus(world, t), mode)
     return cache
 
 
@@ -214,7 +236,7 @@ def evaluate_trade(world: FootballWorld, me, partner, give: list[dict], get: lis
         "your_odds": {"measure": my_obj, "worst_change": min(my_changes), "best_change": max(my_changes), "by_test": mine},
         "their_odds": {"measure": th_obj, "worst_change": min(th_changes), "best_change": max(th_changes), "by_test": theirs},
         "starting_lineup_change_per_week": lineup,
-        "your_lineup_by_week": lineup_by_week(world, world.team(me), after[me]),
+        "your_lineup_by_week": lineup_by_week(world, team_plus(world, me), after[me]),
         "how_it_looks_in_the_app": {
             "they_get_season_avg": rnd(avg_give, 1), "they_give_season_avg": rnd(avg_get, 1),
             "note": "Managers mostly judge by season averages and names; ESPN projections are the better predictor.",
@@ -224,7 +246,8 @@ def evaluate_trade(world: FootballWorld, me, partner, give: list[dict], get: lis
         "roster_check": {"you": roster_check(world, me, give, get), "them": roster_check(world, partner, get, give)},
         "notes": notes,
         "method": f"{sims} simulated seasons per stress test, same random draws before and after; "
-                  "'measure' is playoff odds while a team is under 90% to make it, otherwise title odds.",
+                  "'measure' is playoff odds while a team is under 90% to make it, otherwise title odds. "
+                  "Every team can fill a hole with the best free agent at that position (shown as '(free agent)').",
     }
 
 
@@ -248,7 +271,7 @@ class _Scorer:
         self._out: dict = {}
         self.ranked = {}
         for tid in tids:
-            team = world.team(tid)
+            team = team_plus(world, tid)
             for mode in MODES:
                 for w in self.weeks:
                     rows = [(world.wv(p, w, mode), p["id"], p["slots"]) for p in team]

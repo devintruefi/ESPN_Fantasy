@@ -25,7 +25,7 @@ def test_fast_scorer_matches_world_lineup_score(world):
         give = rng.sample(world.team(a), rng.randint(0, 2))
         get = rng.sample(world.team(b), rng.randint(0, 2))
         gi = frozenset(p["id"] for p in give)
-        after = [p for p in world.team(a) if p["id"] not in gi] + get
+        after = [p for p in trades.team_plus(world, a) if p["id"] not in gi] + get
         for mode in trades.MODES:
             assert sc.score(a, mode, gi, get) == pytest.approx(world.lineup_score(after, mode), abs=1e-9)
 
@@ -166,3 +166,18 @@ def test_lineup_by_week_explains_the_lineup_change(world):
     assert summary == pytest.approx(ev["starting_lineup_change_per_week"]["you"]["by_projections"], abs=0.15)
     # whoever is given away never appears as starting afterwards
     assert all(give[0]["name"] not in " ".join(r.get("starts", [])) for r in rows)
+
+
+def test_a_hole_is_filled_from_free_agents(world):
+    """Trading away your only D/ST costs the gap to the best free-agent D/ST, not a whole D/ST."""
+    me, partner = 1, 2
+    dsts = [p for p in world.team(me) if p["pos"] == "D/ST"]
+    ev = trades.evaluate_trade(world, me, partner, dsts, [], sims=200)
+    if len(dsts) == len([p for p in world.team(me) if p["pos"] == "D/ST"]):
+        fa = [r for r in trades.replacements(world) if r["pos"] == "D/ST"]
+        assert fa and fa[0]["name"].endswith("(free agent)")
+        starts = " ".join(" ".join(r.get("starts", [])) for r in ev["your_lineup_by_week"])
+        assert "(free agent)" in starts
+        # the lineup loses at most the gap between the D/STs, never the D/ST's whole value
+        gap = max(d["base"] for d in dsts) - fa[0]["base"]
+        assert ev["starting_lineup_change_per_week"]["you"]["by_projections"] >= -max(gap, 0) - 3

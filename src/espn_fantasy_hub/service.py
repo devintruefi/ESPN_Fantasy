@@ -964,7 +964,8 @@ class Hub:
                 base["notes"] = [closed] + list(base.get("notes") or [])
         return self._header(h, view) | base
 
-    def find_trades(self, league=None, partner=None, must_receive=None, must_give=None, max_players: int = 3) -> dict:
+    def find_trades(self, league=None, partner=None, must_receive=None, must_give=None, max_players: int = 3,
+                    deep: bool = False) -> dict:
         h = self.resolve(league)
         view = self.view(h)
         me = self._team(view, None)
@@ -998,14 +999,15 @@ class Hub:
         if view.is_categories:
             partners = [partner_id] if partner_id else [t for t in view.teams if t != me]
             return self._header(h, view) | catseason.find_trades(self.category_season(h, view), me, partners,
-                                                                 recv_ids, give_ids, max_players)
+                                                                 recv_ids, give_ids, max_players,
+                                                                 budget_s=75.0 if deep else 22.0)
         self._need_football_points(view, "find_trades")
         world = self.football_world(h, view)
         partners = [partner_id] if partner_id else [t for t in view.teams if t != me]
         out = trades.find_trades(world, me, partners,
                                  must_get=[world.players[i] for i in recv_ids],
                                  must_give=[world.players[i] for i in give_ids],
-                                 max_size=max_players)
+                                 max_size=max_players, budget_s=75.0 if deep else 22.0)
         return self._header(h, view) | out
 
     # ---- moves (writes) ---------------------------------------------------------

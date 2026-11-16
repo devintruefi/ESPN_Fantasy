@@ -343,6 +343,8 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         must_receive: Annotated[list[str] | None, Field(description="Players you must get (all on one team).")] = None,
         must_give: Annotated[list[str] | None, Field(description="Players you want to move.")] = None,
         max_players: Annotated[int, Field(description="Most players per side, 1-3 (basketball: up to 2).")] = 3,
+        deep: Annotated[bool, Field(description="Search up to ~75 s instead of ~22 s (covers every 3-player deal "
+                                                "in a 12-team league). Use when the quick search reports it ran out of time.")] = False,
         league: LeagueArg = None,
     ) -> str:
         """Search every trade (read-only) that improves your starting lineup under both
@@ -350,8 +352,8 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         starters only: every player in a deal must start for the team that gets him, no
         bench throw-ins. Lists win-wins first, then deals that surely help you, each
         stress-tested on season odds for both teams, and reports exactly what was
-        searched. Takes up to ~40 seconds."""
-        return run(lambda h: h.find_trades(league, partner, must_receive, must_give, max_players))
+        searched. Takes up to ~40 seconds (deep: ~90)."""
+        return run(lambda h: h.find_trades(league, partner, must_receive, must_give, max_players, deep))
 
     @mcp.tool(annotations=READ_ONLY)
     def league_intel(league: LeagueArg = None) -> str:

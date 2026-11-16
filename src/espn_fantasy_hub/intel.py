@@ -31,28 +31,37 @@ def _name(names: dict, pid) -> str:
 
 
 # ---- transactions -------------------------------------------------------------------
-def parse_transactions(raws: list[dict]) -> list[dict]:
-    """Executed adds, drops and trades from every period, de-duplicated, oldest first."""
-    seen, out = set(), []
+def parse_transactions(raws: list[dict]) -> tuple[list[dict], dict]:
+    """(executed adds, drops and trades from every period, de-duplicated, oldest first;
+    every transaction by id, any status: an accepted trade's players are on its proposal)."""
+    by_id: dict = {}
     for raw in raws:
         for tx in raw.get("transactions") or []:
-            if tx.get("id") in seen or tx.get("status") != "EXECUTED":
-                continue
-            seen.add(tx.get("id"))
-            out.append(tx)
+            by_id.setdefault(tx.get("id"), tx)
+    out = [tx for tx in by_id.values() if tx.get("status") == "EXECUTED"]
     out.sort(key=lambda t: t.get("processDate") or t.get("proposedDate") or 0)
-    return out
+    return out, by_id
 
 
-def _trades(view: LeagueView, txs: list[dict], names: dict) -> list[dict]:
+def _trade_items(tx: dict, by_id: dict) -> list[dict]:
+    items = [it for it in tx.get("items") or [] if it.get("type") == "TRADE"]
+    if not items:
+        related = by_id.get(tx.get("relatedTransactionId")) or {}
+        items = [it for it in related.get("items") or [] if it.get("type") == "TRADE"]
+    return items
+
+
+def _trades(view: LeagueView, txs: list[dict], by_id: dict, names: dict) -> list[dict]:
     rows = []
     for tx in txs:
         if tx.get("type") not in ("TRADE_ACCEPT", "TRADE_UPHOLD"):
             continue
         gets: dict[str, list[str]] = defaultdict(list)
-        for it in tx.get("items") or []:
-            if it.get("type") == "TRADE":
-                gets[view.team_label(it.get("toTeamId"))].append(_name(names, it.get("playerId")))
+        for it in _trade_items(tx, by_id):
+            gets[view.team_label(it.get("toTeamId"))].append(_name(names, it.get("playerId")))
+        if not gets:
+            teams = {view.team_label(tx.get("teamId"))} if tx.get("teamId") else set()
+            gets = {t: ["(players not in ESPN's activity log)"] for t in teams}
         when = ms_to_dt(tx.get("processDate") or tx.get("proposedDate"), view.pro.now.tzinfo)
         rows.append({"date": f"{when:%b %d}" if when else None, "period": tx.get("scoringPeriodId"), "gets": dict(gets)})
     return rows
@@ -154,8 +163,8 @@ def _fit_score(mine: dict, theirs: dict) -> float:
 # ---- the report -----------------------------------------------------------------------
 def league_intel(view: LeagueView, me, tx_raws: list[dict], names: dict, odds: dict | None = None,
                  needs: dict | None = None, periods_covered: str = "") -> dict:
-    txs = parse_transactions(tx_raws)
-    trades = _trades(view, txs, names)
+    txs, by_id = parse_transactions(tx_raws)
+    trades = _trades(view, txs, by_id, names)
     bids = faab_bids(view, txs, names)
     recent_cut = view.scoring_period - (2 if view.is_football else 7)
     recent: dict[int, list[str]] = defaultdict(list)
@@ -169,7 +178,7 @@ def league_intel(view: LeagueView, me, tx_raws: list[dict], names: dict, odds: d
     partners: dict[int, Counter] = defaultdict(Counter)
     for tx in txs:
         if tx.get("type") in ("TRADE_ACCEPT", "TRADE_UPHOLD"):
-            sides = {it.get("toTeamId") for it in tx.get("items") or [] if it.get("type") == "TRADE"}
+            sides = {it.get("toTeamId") for it in _trade_items(tx, by_id)}
             for a in sides:
                 for b in sides - {a}:
                     partners[a][view.team_label(b)] += 1
@@ -381,12 +390,13 @@ def category_track_record(view: LeagueView, me) -> dict:
                            "result": "W" if g.get("winner") == ("HOME" if (g.get("home") or {}).get("teamId") == me else "AWAY")
                            else "T" if g.get("winner") == "TIE" else "L"})
     rate = {t: {c: round(100 * wins[t][c] / games[t][c]) for c in games[t]} for t in games}
-    league_avg = {c["name"]: round(st.mean(rate[t][c["name"]] for t in rate if c["name"] in rate[t]))
-                  for c in view.categories if any(c["name"] in rate[t] for t in rate)}
+    mine = rate.get(me) or {}
+    rank = {c: 1 + sum(rate[t].get(c, 0) > v for t in rate if t != me) for c, v in mine.items()}
     return {
         "your_matchups": weekly or None,
-        "your_category_win_rate_pct": rate.get(me) or None,
-        "league_average_win_rate_pct": league_avg or None,
+        "your_category_win_rate_pct": mine or None,
+        "your_rank_by_category": rank or None,
+        "completed_matchups": len(weekly),
         "notes": ["Daily-lineup decisions aren't audited here (ESPN doesn't keep every day's bench); the GM "
                   "journal grades decisions and predictions week by week instead."],
     }
