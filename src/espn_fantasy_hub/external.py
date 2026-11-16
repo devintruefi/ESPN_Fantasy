@@ -91,14 +91,14 @@ def nba_scoreboard(day) -> dict | None:
 
 
 def weather(points: list[tuple[float, float]]) -> list[dict] | None:
-    """Hourly wind (mph), precipitation chance (%) and temperature (F) for the next 7 days, UTC."""
+    """Hourly wind (mph), precipitation chance (%) and temperature (F) for the next 10 days, UTC."""
     if not points:
         return []
     lat = ",".join(f"{p[0]:.3f}" for p in points)
     lon = ",".join(f"{p[1]:.3f}" for p in points)
     data = _fetch(("meteo", lat, lon), 3600, OPEN_METEO, {
         "latitude": lat, "longitude": lon, "hourly": "wind_speed_10m,precipitation_probability,temperature_2m",
-        "wind_speed_unit": "mph", "temperature_unit": "fahrenheit", "timezone": "UTC", "forecast_days": 7})
+        "wind_speed_unit": "mph", "temperature_unit": "fahrenheit", "timezone": "UTC", "forecast_days": 10})
     if data is None:
         return None
     return data if isinstance(data, list) else [data]

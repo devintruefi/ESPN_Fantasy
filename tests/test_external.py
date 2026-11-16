@@ -90,7 +90,7 @@ def test_weather_flags():
                      "temperature_2m": [30.0] * 24}}
     w = insights.weather_flags(game, fc)
     assert w["wind_mph"] == 22 and "very windy" in w["flags"][0] and "snow likely" in w["flags"]
-    assert insights.weather_flags({"start": "2026-12-30T18:00Z"}, fc) == {"note": "beyond the 7-day forecast"}
+    assert insights.weather_flags({"start": "2026-12-30T18:00Z"}, fc) == {"note": "beyond the 10-day forecast"}
 
 
 def test_faab_bid_scales_with_gain_and_caps():

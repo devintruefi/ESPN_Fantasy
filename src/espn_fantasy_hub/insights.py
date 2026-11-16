@@ -232,7 +232,7 @@ def weather_flags(game: dict, forecast: dict | None) -> dict | None:
     idx = [i for i, t in enumerate(times)
            if 0 <= (dt.datetime.fromisoformat(t).replace(tzinfo=dt.timezone.utc) - kick.replace(minute=0)).total_seconds() <= 3 * 3600]
     if not idx:
-        return {"note": "beyond the 7-day forecast"}
+        return {"note": "beyond the 10-day forecast"}
     wind = max(num(hourly["wind_speed_10m"][i]) for i in idx)
     rain = max(num(hourly["precipitation_probability"][i]) for i in idx)
     temp = min(num(hourly["temperature_2m"][i]) for i in idx)

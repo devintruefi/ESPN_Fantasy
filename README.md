@@ -168,6 +168,9 @@ name = "Work league"
   ESPN site uses (via [`espn-api`](https://github.com/cwendt94/espn-api)),
   so an ESPN change can break things until updated.
 
+See [docs/GM_GUIDE.md](docs/GM_GUIDE.md) to set Claude up as your fantasy GM (project instructions, weekly rhythm,
+how to check its track record, scheduled read-only briefings).
+
 ## Development
 
 ```bash
