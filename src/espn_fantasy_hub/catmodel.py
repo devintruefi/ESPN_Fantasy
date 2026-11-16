@@ -151,7 +151,7 @@ class CategoryModel:
     def p_win(self, probs: dict[str, float]) -> float:
         """Most categories: P(win a majority). Each category: expected share won."""
         if self.view.scoring_type != "H2H_MOST_CATEGORIES":
-            return st.mean(probs.values())
+            return sum(probs.values()) / max(len(probs), 1)
         dist = [1.0]
         for q in probs.values():
             nxt = [0.0] * (len(dist) + 1)
@@ -168,7 +168,8 @@ class CategoryModel:
 
     def allplay(self, plist: list[dict], tid, weeks: dict) -> float:
         tw = self.week(plist)
-        return st.mean(self.p_win(self.cat_probs(tw, weeks[b])) for b in self.view.teams if b != tid)
+        vals = [self.p_win(self.cat_probs(tw, weeks[b])) for b in self.view.teams if b != tid]
+        return sum(vals) / len(vals)
 
 
 # ------------------------------------------------------------------------------

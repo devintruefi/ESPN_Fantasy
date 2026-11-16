@@ -129,6 +129,21 @@ def _schedule_notes(world: FootballWorld, me, partner) -> list[str]:
     return notes
 
 
+def lineup_by_week(world: FootballWorld, before: list[dict], after: list[dict], mode: str = "proj") -> list[dict]:
+    """Week-by-week best lineup totals before/after a trade and who enters or leaves it."""
+    rows = []
+    for w in world.reg_weeks + world.po_weeks:
+        b = {n: v for _, n, v in world.lineup(before, w, mode)}
+        a = {n: v for _, n, v in world.lineup(after, w, mode)}
+        rows.append(compact({
+            "week": w, "playoffs": True if w in world.po_weeks else None,
+            "before": rnd(world.lineup_total(before, w, mode), 1), "after": rnd(world.lineup_total(after, w, mode), 1),
+            "starts": [f"{n} ({v:g})" for n, v in a.items() if n not in b] or None,
+            "drops_out": [f"{n} ({v:g})" for n, v in b.items() if n not in a] or None,
+        }))
+    return rows
+
+
 # ---- evaluate one trade -------------------------------------------------------------
 def evaluate_trade(world: FootballWorld, me, partner, give: list[dict], get: list[dict], sims: int = 2500) -> dict:
     view = world.view
@@ -199,6 +214,7 @@ def evaluate_trade(world: FootballWorld, me, partner, give: list[dict], get: lis
         "your_odds": {"measure": my_obj, "worst_change": min(my_changes), "best_change": max(my_changes), "by_test": mine},
         "their_odds": {"measure": th_obj, "worst_change": min(th_changes), "best_change": max(th_changes), "by_test": theirs},
         "starting_lineup_change_per_week": lineup,
+        "your_lineup_by_week": lineup_by_week(world, world.team(me), after[me]),
         "how_it_looks_in_the_app": {
             "they_get_season_avg": rnd(avg_give, 1), "they_give_season_avg": rnd(avg_get, 1),
             "note": "Managers mostly judge by season averages and names; ESPN projections are the better predictor.",
@@ -229,6 +245,7 @@ class _Scorer:
         self.slots = [sid for sid, n in order for _ in range(n)]
         self.reg, self.po = list(world.reg_weeks), list(world.po_weeks)
         self.weeks = self.reg + self.po
+        self._out: dict = {}
         self.ranked = {}
         for tid in tids:
             team = world.team(tid)
@@ -238,8 +255,21 @@ class _Scorer:
                     rows.sort(key=lambda r: -r[0])
                     self.ranked[(tid, mode, w)] = rows
 
+    def _rows(self, tid, mode, w, out_ids):
+        if not out_ids:
+            return self.ranked[(tid, mode, w)]
+        key = (tid, mode, w, out_ids)
+        rows = self._out.get(key)
+        if rows is None:
+            if len(self._out) > 50000:
+                self._out.clear()
+            rows = self._out[key] = [r for r in self.ranked[(tid, mode, w)] if r[1] not in out_ids]
+        return rows
+
     def _week(self, tid, mode, w, out_ids, add, starters=None) -> float:
-        rows = [r for r in self.ranked[(tid, mode, w)] if r[1] not in out_ids] if out_ids else list(self.ranked[(tid, mode, w)])
+        rows = self._rows(tid, mode, w, out_ids)
+        if add:
+            rows = list(rows)
         for p in add:
             v = self.world.wv(p, w, mode)
             i = next((j for j, r in enumerate(rows) if r[0] < v), len(rows))
@@ -284,8 +314,11 @@ def _all_start(sc: _Scorer, tid, out_ids, add) -> bool:
     return all(p["id"] in starters for p in add)
 
 
+TIER2_POOL = 9   # 3-player deals: each side's 9 most trade-relevant players (starters first)
+
+
 def find_trades(world: FootballWorld, me, partners: list, must_get: list[dict] = (), must_give: list[dict] = (),
-                max_size: int = 3, budget_s: float = 20.0, top: int = 4, sims: int = 1500) -> dict:
+                max_size: int = 3, budget_s: float = 22.0, top: int = 4, sims: int = 1500) -> dict:
     """Search trades with every partner, starters only. Tier 1 = every 1-for-1 up to 2-for-2 with
     every partner; tier 2 = 3-player deals, most promising partners first, within the time budget.
     A deal is kept only if it helps your starting lineup under both views and every player in it
@@ -316,9 +349,13 @@ def find_trades(world: FootballWorld, me, partners: list, must_get: list[dict] =
                     ", ".join(f"{g}-for-{r}" for g, r in tier) + " (skipped; out of time)")
                 continue
             th = theirs_by[partner]
+            pool_me = mine
+            if tier_i == 1:   # bigger deals: the most relevant players on each side (plus required ones)
+                pool_me = mine[:TIER2_POOL] + [p for p in mine[TIER2_POOL:] if p["id"] in mg]
+                th = th[:TIER2_POOL] + [p for p in th[TIER2_POOL:] if p["id"] in mr]
             done = True
             for g, r in tier:
-                for give in itertools.combinations(mine, g):
+                for give in itertools.combinations(pool_me, g):
                     gi = frozenset(p["id"] for p in give)
                     if mg and not mg <= gi:
                         continue
@@ -347,7 +384,7 @@ def find_trades(world: FootballWorld, me, partners: list, must_get: list[dict] =
                         break
                 if not done:
                     break
-            label = ", ".join(f"{g}-for-{r}" for g, r in tier)
+            label = ", ".join(f"{g}-for-{r}" for g, r in tier) + (f" (top {TIER2_POOL} players a side)" if tier_i == 1 else "")
             coverage.setdefault(view.team_label(partner), []).append(label if done else label + " (partly; out of time)")
             if not done:
                 out_of_time = True

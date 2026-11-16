@@ -39,6 +39,12 @@ SCENARIOS = [
 MIN_GAIN = 0.005   # half a point of weekly all-play win %: smaller changes are noise
 
 
+def _mean(xs) -> float:
+    """Float mean (statistics.mean uses exact fractions and is ~20x slower in hot loops)."""
+    xs = list(xs)
+    return sum(xs) / len(xs) if xs else 0.0
+
+
 def _probit(p: float) -> float:
     return _ND.inv_cdf(min(max(p, 1e-6), 1 - 1e-6))
 
@@ -134,7 +140,7 @@ class CategorySeason:
 
     def cat_share(self, A: dict, B: dict) -> float:
         """Expected share of categories A wins (how each-category leagues count a week)."""
-        return st.mean(self.m.cat_probs(A, B).values())
+        return _mean(self.m.cat_probs(A, B).values())
 
     def _team_week(self, plist: list[dict], mp: int, sc: dict) -> dict:
         act = self.active(plist, mp, sc)
@@ -249,7 +255,7 @@ class CategorySeason:
         """Average weekly result against every other team: P(win) in most-categories leagues,
         expected share of categories won when each category counts."""
         f = self.cat_share if self.each else self.p_game
-        return st.mean(f(wk, weeks[b]) for b in self.teams if b != tid)
+        return _mean(f(wk, weeks[b]) for b in self.teams if b != tid)
 
 
 def objective(odds: dict) -> str:
@@ -338,9 +344,9 @@ def season_outlook(season: CategorySeason, team_id, sims: int = 5000) -> dict:
 
     lo = {k: min(stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS) for k in ("playoffs", "bye", "title")}
     hi = {k: max(stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS) for k in ("playoffs", "bye", "title")}
-    by_test = [{"test": s["label"], "playoffs_pct": pct(stress[s["key"]]["teams"][team_id]["playoffs"]),
-                "bye_pct": pct(stress[s["key"]]["teams"][team_id]["bye"]) if res["has_bye"] else None,
-                "title_pct": pct(stress[s["key"]]["teams"][team_id]["title"])} for s in SCENARIOS]
+    by_test = [compact({"test": s["label"], "playoffs_pct": pct(stress[s["key"]]["teams"][team_id]["playoffs"]),
+                        "bye_pct": pct(stress[s["key"]]["teams"][team_id]["bye"]) if res["has_bye"] else None,
+                        "title_pct": pct(stress[s["key"]]["teams"][team_id]["title"])}) for s in SCENARIOS]
 
     full = {t: season.fit_roster(pl) for t, pl in rosters.items()}
     league = []
@@ -388,14 +394,14 @@ def season_outlook(season: CategorySeason, team_id, sims: int = 5000) -> dict:
             "title_pct": pct(tally[team_id]["title"]),
             "expected_wins_left": rnd(tally[team_id]["wins"], 1),
             "avg_final_seed": rnd(tally[team_id]["seed"], 1),
-            "stress_test_range": {"playoffs_pct": f"{pct(lo['playoffs'])}-{pct(hi['playoffs'])}",
-                                  "bye_pct": f"{pct(lo['bye'])}-{pct(hi['bye'])}" if res["has_bye"] else None,
-                                  "title_pct": f"{pct(lo['title'])}-{pct(hi['title'])}"},
+            "stress_test_range": compact({"playoffs_pct": f"{pct(lo['playoffs'])}-{pct(hi['playoffs'])}",
+                                          "bye_pct": f"{pct(lo['bye'])}-{pct(hi['bye'])}" if res["has_bye"] else None,
+                                          "title_pct": f"{pct(lo['title'])}-{pct(hi['title'])}"}),
         }),
         "stress_tests": by_test,
         "your_matchups": my_weeks,
         "wins_needed": wins_needed,
-        "league": league,
+        "all_teams": league,
         "sims": sims,
         "notes": [
             "Weekly odds come from each team's per-game category production (season averages; the "
@@ -501,16 +507,21 @@ def evaluate_trade(season: CategorySeason, me, partner, give_ids: list, get_ids:
 
 
 def find_trades(season: CategorySeason, me, partners: list, must_get: list = (), must_give: list = (),
-                max_size: int = 2, budget_s: float = 20.0, top: int = 4, sims: int = 1500) -> dict:
-    """Search 1-for-1 up to 2-for-2 deals that raise your full-strength weekly all-play win % under
+                max_size: int = 2, budget_s: float = 22.0, top: int = 4, sims: int = 1500) -> dict:
+    """Search 1-for-1 up to 2-for-2 deals that raise your full-strength weekly all-play result under
     both views (season and last 15 days) and don't cost the partner; best ones get the full stress test."""
     view = season.view
     t0 = time.monotonic()
     m = season.m
+    ir = view.sport.ir_slot
     rosters = season.rosters()
     mg, mr = set(must_give), set(must_get)
-    base = {r: season.allplay_weeks(rosters, r) for r in (False, True)}
-    base_ap = {(t, r): season.allplay(t, base[r][t], base[r]) for t in [me] + list(partners) for r in (False, True)}
+    views = (False, True)
+    base = {r: season.allplay_weeks(rosters, r) for r in views}
+    base_ap = {(t, r): season.allplay(t, base[r][t], base[r]) for t in [me] + list(partners) for r in views}
+
+    def after_list(tid, out_ids, add):
+        return [p for p in rosters[tid] if p["id"] not in out_ids] + [p if p["slot"] != ir else dict(p, slot=None) for p in add]
 
     def cands(tid):
         pl = sorted(rosters[tid], key=m.value, reverse=True)[:10]
@@ -535,11 +546,10 @@ def find_trades(season: CategorySeason, me, partners: list, must_get: list = (),
                     ri = {p["id"] for p in get}
                     if mr and not mr <= ri:
                         continue
-                    after = _swap(rosters, me, partner, gi, ri)
-                    gains = []
-                    ok = True
-                    for recent in (False, True):
-                        wk = season.week(season.fit_roster(after[me], recent), G_WEEK, recent)
+                    mine_after = after_list(me, gi, get)
+                    gains, ok = [], True
+                    for recent in views:
+                        wk = season.week(season.fit_roster(mine_after, recent), G_WEEK, recent)
                         d = season.allplay(me, wk, base[recent]) - base_ap[(me, recent)]
                         if d <= MIN_GAIN:
                             ok = False
@@ -547,9 +557,10 @@ def find_trades(season: CategorySeason, me, partners: list, must_get: list = (),
                         gains.append(d)
                     if not ok:
                         continue
+                    theirs_after = after_list(partner, ri, give)
                     theirs = []
-                    for recent in (False, True):
-                        wk = season.week(season.fit_roster(after[partner], recent), G_WEEK, recent)
+                    for recent in views:
+                        wk = season.week(season.fit_roster(theirs_after, recent), G_WEEK, recent)
                         theirs.append(season.allplay(partner, wk, base[recent]) - base_ap[(partner, recent)])
                     if min(theirs) <= -0.01:
                         continue

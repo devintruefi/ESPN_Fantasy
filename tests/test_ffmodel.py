@@ -21,7 +21,7 @@ def test_season_outlook_shape_and_sanity(football_hub):
     assert "score_now" in out["your_weeks"][0]
     assert all(0 <= w["win_pct"] <= 100 for w in out["your_weeks"])
     # the league table: 12 teams, 6 playoff spots, 2 byes, one champion
-    lg = out["league"]
+    lg = out["all_teams"]
     assert len(lg) == 12
     assert sum(t["playoffs_pct"] for t in lg) == pytest.approx(600, abs=1)
     assert sum(t["bye_pct"] for t in lg) == pytest.approx(200, abs=1)

@@ -458,8 +458,11 @@ def season_outlook(view: LeagueView, live_raw: dict | None, past_raws: list[dict
 
     # stress tests for the user's own odds
     stress = world.stress_test(rosters, sims=max(1500, sims // 3))
-    lo = {k: min(stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS) for k in ("playoffs", "title")}
-    hi = {k: max(stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS) for k in ("playoffs", "title")}
+    lo = {k: min(stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS) for k in ("playoffs", "bye", "title")}
+    hi = {k: max(stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS) for k in ("playoffs", "bye", "title")}
+    by_test = [compact({"test": s["label"], "playoffs_pct": pct(stress[s["key"]]["teams"][team_id]["playoffs"]),
+                        "bye_pct": pct(stress[s["key"]]["teams"][team_id]["bye"]) if byes else None,
+                        "title_pct": pct(stress[s["key"]]["teams"][team_id]["title"])}) for s in SCENARIOS]
 
     # the user's path, week by week
     my_weeks = []
@@ -556,16 +559,18 @@ def season_outlook(view: LeagueView, live_raw: dict | None, past_raws: list[dict
             "title_pct": pct(tally[team_id]["title"]),
             "expected_wins_left": rnd(tally[team_id]["wins"], 1),
             "avg_final_seed": rnd(tally[team_id]["seed"], 1),
-            "stress_test_range": {"playoffs_pct": f"{pct(lo['playoffs'])}-{pct(hi['playoffs'])}",
-                                  "title_pct": f"{pct(lo['title'])}-{pct(hi['title'])}"},
+            "stress_test_range": compact({"playoffs_pct": f"{pct(lo['playoffs'])}-{pct(hi['playoffs'])}",
+                                          "bye_pct": f"{pct(lo['bye'])}-{pct(hi['bye'])}" if byes else None,
+                                          "title_pct": f"{pct(lo['title'])}-{pct(hi['title'])}"}),
         },
+        "stress_tests": by_test,
         "your_weeks": my_weeks,
         "wins_needed": wins_needed,
         "your_best_lineup_next_week": [
             {"slot": s, "player": n, "proj": v} for s, n, v in best_lineup(view, mine, next_week)[1]
         ] if next_week else None,
         "best_adds": [a for _, a in adds[:8]],
-        "league": league,
+        "all_teams": league,
         "sims": sims,
         "notes": notes,
     }

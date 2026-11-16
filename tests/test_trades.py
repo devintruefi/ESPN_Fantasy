@@ -111,7 +111,7 @@ def season(basketball_hub):
 
 def test_category_season_sums_and_determinism(season):
     out = catseason.season_outlook(season, 1, sims=1500)
-    lg = out["league"]
+    lg = out["all_teams"]
     n = season.n_playoff
     assert sum(t["playoffs_pct"] for t in lg) == pytest.approx(100 * n, abs=1)
     assert sum(t["title_pct"] for t in lg) == pytest.approx(100, abs=1)
@@ -150,3 +150,19 @@ def test_category_trade_eval_and_search(season):
     for r in out["best_trades"]:
         assert r["type"] != "hurts you"
         assert len(r["you_give"]) == len(r["you_get"]) == 1
+
+
+def test_lineup_by_week_explains_the_lineup_change(world):
+    me, partner = 1, 2
+    give = [max(world.team(me), key=lambda p: p["base"])]
+    get = [max(world.team(partner), key=lambda p: p["base"])]
+    ev = trades.evaluate_trade(world, me, partner, give, get, sims=300)
+    rows = ev["your_lineup_by_week"]
+    assert [r["week"] for r in rows] == world.reg_weeks + world.po_weeks
+    # the weekly totals reproduce the summary number (60% regular season, 40% playoffs)
+    reg = [r["after"] - r["before"] for r in rows if not r.get("playoffs")]
+    po = [r["after"] - r["before"] for r in rows if r.get("playoffs")]
+    summary = 0.6 * sum(reg) / len(reg) + 0.4 * sum(po) / len(po)
+    assert summary == pytest.approx(ev["starting_lineup_change_per_week"]["you"]["by_projections"], abs=0.15)
+    # whoever is given away never appears as starting afterwards
+    assert all(give[0]["name"] not in " ".join(r.get("starts", [])) for r in rows)
