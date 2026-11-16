@@ -19,55 +19,69 @@ log = logging.getLogger("espn_fantasy_hub")
 
 INSTRUCTIONS = """\
 Live access to the user's ESPN fantasy football and fantasy basketball leagues:
-every team, roster, matchup, stat, setting and transaction, plus strategy tools and
-(with the user's approval) roster moves. Act as a sharp fantasy advisor.
+every team, roster, matchup, stat, setting and transaction, plus simulation-based
+strategy tools, outside data, and (with the user's approval) roster moves. Act as
+the user's general manager: rigorous, honest about uncertainty, and focused on the
+season, not one week.
 
 Start with `my_leagues`: every league, the user's team, live matchup and lineup
 alerts. Most tools take `league` (name, id, or "football"/"basketball" when the user
 has only one of that sport) and `team` (name, abbreviation, owner, or omit for the
 user's team).
 
-How to give good advice:
-- Ground every recommendation in this league's rules (`league_settings`: PPR vs
-  standard, categories, roster slots, FAAB vs waiver priority, pickup limits,
-  trade deadline, playoff format).
-- Before lineup advice run `lineup_check` (it lists exact swaps and, when the bench
-  can't help, free agents who play that day). Mention game times and anyone
-  QUESTIONABLE/DAY_TO_DAY to re-check before lock.
+GM PRINCIPLES (follow these in every recommendation):
+1. Objective: playoff odds while the team is under ~90% to make it, then title odds.
+   Never trade season strength for one week. A move is a "clear win" only if it helps
+   in every stress test (`season_outlook`, `trade_analyzer`, `find_trades` run five).
+2. Starters only: value is the change to the starting lineup (football) or to weekly
+   full-strength category odds (basketball). Bench players matter only for byes and
+   injuries; bench throw-ins add nothing to a trade.
+3. For each recommendation say: the objective number and its change, the worst case
+   across stress tests, both views (ESPN projections and the season averages managers
+   see), what would make it wrong, and how sure you are. Use `track_record` to know
+   how well the model has predicted this league.
+4. What predicts: ESPN projections beat season averages; don't add matchup
+   adjustments on top; volume (snaps, targets, carries) is sticky while touchdowns
+   regress; D/ST scoring is mostly noise. Treat outside signals (trending adds, Vegas,
+   weather) as tie-breakers and news alerts, not as overrides of the projections.
+5. Keep the core. Most managers rotate only 1-2 bench spots; suggest drops only from
+   those (`waiver_advisor` marks them) and never a regular starter for a short-term
+   gain. Don't drop injured stars who are expected back.
+6. Read-only by default: analysis never changes anything. Moves need a preview and
+   the user's explicit yes (see MOVES).
+
+WORKFLOWS:
+- Lineups (football weekly, basketball daily): `lineup_check` (exact swaps, bench
+  vs free agents, game times), then `game_environment` for close calls (Vegas
+  implied points, weather, byes; basketball: totals and blowout risk). Mention
+  anyone QUESTIONABLE/DAY_TO_DAY to re-check before lock.
+- Waivers: `waiver_advisor` (lineup gain, the cheapest rotation-spot drop, FAAB bid
+  from this league's winning bids), `market_trends` (what managers everywhere are
+  adding/dropping), `player_usage` (football roles: snaps, targets, carries).
+- Trades: `find_trades` (every starters-only deal, win-wins first; deep=true for a
+  full 3-player search), then `trade_analyzer` on the best (verdict, both teams' odds
+  by stress test, `your_lineup_by_week`, roster/drop check, warnings), and
+  `league_intel` (who is contending, trade-block players, needs/surplus, past trades).
+  Prefer partners out of the race; never trade with the current opponent mid-week.
+- Season: `strategy_playbook` (the league's format), `season_outlook` (playoff/bye/
+  title odds with a stress-test range, matchup-by-matchup path, record needed),
+  `league_intel`, `schedule_planner` (byes, playoff-week schedules, light days),
+  `power_rankings`. Basketball categories: `category_strategy` (build, core vs
+  rotation spots), `player_values` (G-scores, punt-aware), `matchup_projection`.
+
+FORMAT NOTES:
 - Football: `week.proj` is ESPN's projection; `opp_rank_vs_pos` is the opponent's
-  defense rank vs that position (1 = toughest, 32 = easiest); BYE = no game.
-  For start/sit, trust ESPN's projection: it already prices the matchup, and
-  adjusting it for `opp_rank_vs_pos` on top made predictions worse in testing.
-  For football season strategy, read `strategy_playbook`, then `season_outlook`
-  (playoff/bye/title odds from a simulation of the rest of the season, the user's
-  week-by-week win chances and byes, the record needed to make the playoffs, and the
-  free agents that most raise their lineup). Check how the league scores kickers
-  before suggesting a kicker move. Never suggest accepting a trade with the user's
-  current opponent before that week's games are done.
+  defense rank vs that position (1 = toughest); BYE = no game. Check how the league
+  scores kickers before suggesting a kicker move.
 - Basketball: lineups are DAILY (scoring periods are days; matchups run Mon-Sun).
-  In category leagues ESPN's player rater (`rater`) is the best single value
-  number. Use `matchup_projection` to see which categories are winnable or lost
-  this week and `category_report` for season strengths/weaknesses and punts.
-  Respect the league's pickup limit (shown as `pickups`).
-- Season strategy: read `strategy_playbook` for the league's format, then use
-  `category_strategy` (category leagues: build, core vs rotation spots, best-fit
-  pickups), `player_values` (G-score rankings, punt-aware), `season_outlook`
-  (football) and `schedule_planner` (matchup calendar, playoff-week schedules,
-  byes, light days for streaming).
-- Strategy: `power_rankings` (all-play record = true strength; luck),
-  `waiver_upgrades`, `free_agents`, `trade_analyzer` (both sides' value and each
-  team's best-lineup change), `team_schedule` (remaining strength of schedule),
-  `player_info` (news, outlook, game log). Combine several before recommending
-  trades or big moves, and say what the data does and doesn't show.
+  ESPN's player rater (`rater`) is the best single value number. Respect the
+  league's pickup limit (`pickups`).
 
 ROSTER PHILOSOPHY (important): treat most of the roster as a core the user keeps.
-Most managers rotate only 1-2 streaming spots per week. Judge players by season and
-multi-week averages, not one night's schedule or a short cold streak, and in
-category leagues think about the whole week. Never suggest dropping a player whose
-season value is higher than the player being added (`add_player` previews show a
-`value_check` and a CAUTION warning when that happens). Pick drops only from the
-user's weakest rotation spots; if you don't know which spots they rotate, ask.
-Don't drop injured stars who are expected back.
+Judge players by season and multi-week averages, not one night's schedule or a short
+cold streak. Never suggest dropping a player whose season value is higher than the
+player being added (`add_player` previews show a `value_check` and a CAUTION warning).
+If you don't know which spots the user rotates, ask.
 
 MOVES (`set_lineup`, `add_player`, `drop_player`, `propose_trade`) change the user's
 real team. Always call them first WITHOUT confirm to get a preview, show the user
@@ -475,21 +489,24 @@ def build_server(hub: Hub | None = None) -> FastMCP:
     def waiver_plan(league: str) -> str:
         """Who to add/drop (and how much FAAB to bid) in one league."""
         return (
-            f"Build my waiver plan for league '{league}'. Use league_settings (waiver type, FAAB, pickup limits), "
-            "team_roster for my team, waiver_upgrades, free_agents (by position for football; sorted by l7/l15 for "
-            "basketball), category_report for category leagues, and player_info on the top candidates. Recommend "
-            "specific adds with matching drops, FAAB bids where relevant, and why. Preview with add_player; don't "
-            "submit until I approve."
+            f"Build my waiver plan for league '{league}'. Run waiver_advisor (lineup gain, the cheapest drop from my "
+            "rotation spots, FAAB bid from this league's winning bids), market_trends (what managers everywhere are "
+            "adding/dropping, and whether I can get them), and for football player_usage on the top candidates "
+            "(is the role real: snaps, targets, carries). Check league_settings for waiver rules and pickup limits. "
+            "Recommend at most 2 moves with exact drops and bids, the season-long reason, and how sure you are. "
+            "Never drop a regular starter. Preview with add_player; don't submit until I approve."
         )
 
     @mcp.prompt(title="Trade ideas")
     def trade_ideas(league: str) -> str:
         """Find realistic trades that help both sides."""
         return (
-            f"Find trade ideas for me in league '{league}'. Use standings, power_rankings, all_rosters, my "
-            "team_roster, and category_report (category leagues) to find teams whose surplus matches my needs and "
-            "vice versa. For the 2-3 best ideas run trade_analyzer and explain why the other manager might accept. "
-            "Don't send anything; offer to preview propose_trade if I like one."
+            f"Find trade ideas for me in league '{league}'. Run find_trades (deep=true if it reports it ran out of "
+            "time) and league_intel (contenders vs sellers, trade-block players, needs/surplus, past trades). For the "
+            "2-3 best deals run trade_analyzer and report: the verdict, my playoff/title odds change in the worst and "
+            "best stress test, both starting lineups' change by projections and by season averages, the week-by-week "
+            "lineup (your_lineup_by_week), roster/drop needs, and why the other manager would say yes (how it looks to "
+            "them in the app). Starters only: no bench throw-ins. Don't send anything; offer to preview propose_trade."
         )
 
     @mcp.prompt(title="Matchup game plan")
@@ -506,11 +523,23 @@ def build_server(hub: Hub | None = None) -> FastMCP:
     def season_outlook_prompt(league: str) -> str:
         """Playoff chances and long-term strategy."""
         return (
-            f"Give me a season outlook for league '{league}'. Read strategy_playbook first. Football: use "
-            "season_outlook (simulated playoff/bye/title odds, my week-by-week path, record needed, best adds), "
-            "then power_rankings and recent_transactions (pending trade offers). Basketball categories: use "
-            "category_strategy and schedule_planner. Tell me whether to buy or sell and the concrete moves that "
-            "would most improve my playoff and title chances, with the numbers."
+            f"Give me a season outlook for league '{league}'. Read strategy_playbook first, then season_outlook "
+            "(playoff/bye/title odds with the stress-test range, my matchup-by-matchup path, record needed), "
+            "league_intel (who's contending, who's selling) and schedule_planner (byes, playoff-week schedules). "
+            "Basketball categories: also category_strategy. Tell me whether to buy, hold or sell and the 2-3 moves "
+            "that would most raise my playoff (or, if I'm safe, title) odds, each with its worst case."
+        )
+
+    @mcp.prompt(title="Weekly GM review")
+    def weekly_gm_review() -> str:
+        """A full read-only review of every league: standing, decisions, moves to consider."""
+        return (
+            "Do my weekly GM review, read-only. Call my_leagues. For EVERY league: season_outlook (odds and "
+            "stress-test range), track_record (how well the model predicted this league; lineup audit), "
+            "league_intel (situations, trades, FAAB), waiver_advisor and find_trades (quick search). Then report "
+            "per league: where I stand and what changed since last week, how last week's decisions graded out, the "
+            "1-2 moves worth making with their worst case and how sure you are, and what would make each wrong. "
+            "Do not call set_lineup, add_player, drop_player or propose_trade."
         )
 
     @mcp.tool(annotations=READ_ONLY)

@@ -213,6 +213,8 @@ def weather_points(games: list[dict]) -> list[tuple[str, tuple[float, float]]]:
     for g in games:
         if g["indoor"] or (g.get("country") not in (None, "USA")) or g["home"] not in STADIUMS:
             continue
+        if g.get("status") not in (None, "STATUS_SCHEDULED"):
+            continue   # already started or over
         out.append((g["id"], STADIUMS[g["home"]]))
     return out
 
@@ -272,8 +274,11 @@ def dst_board(view, world, lines: dict, week: int, me) -> list[dict]:
 
 
 # ---- waiver plan (football) ----------------------------------------------------------------
-def faab_bid(gain: float, hist: dict | None, left: float, contested: bool) -> str:
-    """A bid from this league's own winning-bid history, scaled by how much the player helps."""
+def faab_bid(gain: float, hist: dict | None, left: float, contested: bool, pos: str | None = None) -> str:
+    """A bid from this league's own winning-bid history, scaled by how much the player helps.
+    Defenses and kickers are streamers: $0-1 unless the gain is large."""
+    if pos in ("D/ST", "K") and gain < 2.5:
+        return "$1-$2" if contested else "$0-$1"
     if not hist:
         p50, p75, p90 = 3, 8, 15
     else:
@@ -326,7 +331,7 @@ def waiver_plan_football(world, me, faab: dict | None, faab_left: float | None, 
             "drop": f"{d['name']} ({d['pos']})",
             "lineup_gain_per_week": rnd(g, 1), "gain_by_season_averages": rnd(g_avg, 1),
             "trending_on_sleeper": True if hot else None,
-            "faab_bid": faab_bid(g, faab, faab_left, hot) if faab_left is not None else None,
+            "faab_bid": faab_bid(g, faab, faab_left, hot, p["pos"]) if faab_left is not None else None,
             "_g": g,
         }))
     rows.sort(key=lambda r: -r["_g"])

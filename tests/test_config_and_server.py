@@ -100,3 +100,22 @@ def test_prompts(football_hub):
     assert {"daily_checkin", "waiver_plan", "trade_ideas", "matchup_gameplan", "season_outlook"} <= prompts
     res = asyncio.run(mcp.get_prompt("waiver_plan", {"league": "Work league"}))
     assert "Work league" in res.messages[0].content.text
+
+
+def test_gm_tools_are_read_only_and_listed(football_hub):
+    mcp = build_server(football_hub)
+    tools = {t.name: t for t in asyncio.run(mcp.list_tools())}
+    gm = {"find_trades", "trade_analyzer", "season_outlook", "league_intel", "track_record",
+          "market_trends", "player_usage", "game_environment", "waiver_advisor"}
+    assert gm <= set(tools)
+    for name in gm:
+        assert tools[name].annotations.readOnlyHint is True
+    for name in ("set_lineup", "add_player", "drop_player", "propose_trade"):
+        assert tools[name].annotations.readOnlyHint is False
+
+
+def test_weekly_review_prompt_forbids_moves(football_hub):
+    mcp = build_server(football_hub)
+    res = asyncio.run(mcp.get_prompt("weekly_gm_review", {}))
+    text = res.messages[0].content.text
+    assert "read-only" in text and "Do not call set_lineup" in text

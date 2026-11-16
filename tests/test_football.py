@@ -328,3 +328,12 @@ def test_player_card_requests_recent_weekly_projections(football_hub):
     football_hub.player(name="tee higgins")
     extra = next(c[1] for c in football_hub._handles[0].client.calls if c[0] == "cards")
     assert extra == tuple(f"112026{w}" for w in range(6, 11))
+
+
+def test_player_card_fills_past_projections_from_public_feed(football_hub):
+    """ESPN's card only carries this week's projection; last week's comes from the public feed."""
+    out = football_hub.player(name="tee higgins")
+    by_week = {w["week"]: w for w in out["weekly_log"]}
+    assert by_week[10].get("proj") and by_week[9].get("proj")
+    assert ("public_projections", 1, tuple(range(2, 12))) in [
+        (c[0], c[1], tuple(c[2])) for c in football_hub._handles[0].client.calls if c[0] == "public_projections"]

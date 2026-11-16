@@ -2,7 +2,10 @@
 
 An MCP server that connects Claude to your ESPN **fantasy football** and
 **fantasy basketball** leagues: every team, roster, matchup, stat, setting and
-transaction, plus strategy tools and (with your approval) roster moves.
+transaction, plus a "GM" layer (season simulations with stress tests, a trade
+finder, league memory, a track record of how well it predicts, and outside data
+from Sleeper, nflverse, Vegas lines and weather) and, with your approval, roster
+moves.
 
 Ask Claude things like:
 
@@ -11,6 +14,8 @@ Ask Claude things like:
 - "Am I going to win my basketball matchup? Which categories can I still flip?"
 - "Find me a trade: I'm deep at WR and need a RB. Who's a good partner?"
 - "Who's actually the best team in my league, and who's been lucky?"
+- "What are my playoff odds, and what's the worst case?"
+- "Find every trade that makes my starting lineup better and is fair to the other side."
 
 ## Tools
 
@@ -37,7 +42,7 @@ Ask Claude things like:
 |---|---|
 | `lineup_check` | Starters who are OUT, injured, on bye or without a game, the exact bench swap, free agents who play that day when the bench can't help, empty/IR slot tips, pickups left |
 | `matchup_projection` | Basketball: projected final category totals (or points) for both teams this week, toss-ups, days with more players than slots |
-| `season_outlook` | Football: simulated playoff, bye and title odds for every team, your week-by-week win chances and bye holes, the record you need, and the free agents that most raise your lineup |
+| `season_outlook` | Simulated playoff, bye and title odds for every team with a stress-test range, your matchup-by-matchup win chances, the record you need; football also lists bye holes and the free agents that most raise your lineup |
 | `strategy_playbook` | The research-based playbook for the league's format, filled in with its rules (football points, basketball categories) |
 | `category_strategy` | Category leagues: odds in every category now and at full strength, which to build around or concede, core vs rotation spots, best-fit pickups |
 | `player_values` | Category leagues: G-score rankings (per-game value discounted for week-to-week noise), punt-aware |
@@ -45,7 +50,14 @@ Ask Claude things like:
 | `power_rankings` | All-play record (true strength), expected wins, luck, scoring and recent form |
 | `category_report` | Category leagues: rank in every category, strengths/weaknesses, punts, swingable categories now |
 | `waiver_upgrades` | Free agents who beat your weakest players |
-| `trade_analyzer` | Both sides' value, each team's best-lineup change, your category changes |
+| `trade_analyzer` | A verdict on one trade: both teams' playoff/title odds under five stress tests, both starting lineups' change (projections and season averages), your lineup week by week, roster/drop check, opponent and rival warnings |
+| `find_trades` | Every starters-only trade that improves your lineup (1-for-1 up to 3-for-3), win-wins first, the best ones stress-tested; `deep` for a full search |
+| `league_intel` | Every manager: contender/bubble/long shot, activity, FAAB left, trade block, needs and surplus, trades this season; the teams that fit yours as trade partners; winning FAAB bids |
+| `track_record` | How well the win odds have predicted this league (Brier score, calibration) and an audit of your lineups (points left on the bench, losses a better lineup would have flipped) |
+| `waiver_advisor` | Pickups ranked by lineup gain, each with the cheapest drop from your rotation spots and a FAAB bid from this league's history |
+| `market_trends` | What managers everywhere are adding and dropping (Sleeper, 24 h), and whether you can get them here |
+| `player_usage` | Football: snaps, targets, target share, carries (season vs last 3), TD dependence, buy/sell flags (nflverse) |
+| `game_environment` | Football: Vegas lines and implied points, byes, stadium weather, your players by game, D/ST streaming board; basketball: totals and blowout risk |
 
 **Moves** (only when `ESPN_ALLOW_WRITES=1`)
 
@@ -61,7 +73,25 @@ sends it after you say yes (`confirm=true`). Claude's own permission prompt for
 these tools is a second check; once you trust it you can set them to "always allow".
 
 **Guided workflows** (MCP prompts): Daily check-in, Waiver wire plan, Trade
-ideas, Matchup game plan, Season outlook.
+ideas, Matchup game plan, Season outlook, Weekly GM review (read-only).
+
+## How the GM layer decides
+
+- **Objective:** playoff odds while you're under ~90% to make it, then title odds. One
+  week is never traded for the season.
+- **Starters only:** a move's value is what it does to your starting lineup (basketball:
+  weekly category odds at full strength). Bench throw-ins count for nothing.
+- **Stress tests:** every season simulation runs five ways (football: ESPN projections,
+  more randomness, season averages, a 50/50 blend, slower injury returns; basketball:
+  season averages, more randomness, last-15-day form, injured players back later or
+  never). A move is a clear win only if it helps in all five.
+- **What it rests on:** in backtests on real leagues ESPN's weekly projections beat
+  season averages at every position, matchup adjustments on top made things worse, and
+  projection-based weekly win odds scored a Brier of 0.22 (coin flip 0.25).
+  `track_record` shows how that holds up in your own league.
+- **Outside data** (Sleeper, nflverse, ESPN's Vegas lines, Open-Meteo) is used for news
+  and tie-breakers, never to override projections, and each source failing is reported,
+  not fatal.
 
 ## Hosted setup (Claude on web, desktop and phone)
 
@@ -130,6 +160,8 @@ name = "Work league"
   tomorrow and Claude passes `days_ahead=1`. Weekly projections assume the
   matchup ends Sunday (All-Star/playoff matchups can be longer).
 - **Category leagues** use ESPN's Player Rater as the "how good is he" number.
+- **Slow tools:** `find_trades` takes up to ~40 seconds (`deep`: ~90); everything
+  else answers in a few seconds.
 - **Freshness:** data is cached up to ~45 seconds. After a move in the ESPN
   app, ask Claude to refresh.
 - **Unofficial:** ESPN has no public fantasy API. This uses the endpoints the

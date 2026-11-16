@@ -6,7 +6,13 @@ MCP server for ESPN fantasy football + basketball. Python 3.10+, built on
 ## Layout
 - `src/espn_fantasy_hub/espn.py` — cached raw ESPN fetches (`LeagueClient`), error mapping.
 - `views.py` — pure parsing of raw ESPN JSON into compact dicts (`LeagueView`, `ProSchedule`).
-- `analysis.py` — lineup check; `strategy.py` — power rankings, categories, upgrades, trades, projections.
+- `analysis.py` — lineup check; `strategy.py` — power rankings, categories, upgrades, projections.
+- `projections.py` — public ESPN projection feed scored with league rules; `ffmodel.py` — football world,
+  season sim, stress-test `SCENARIOS`; `trades.py` — football trade evaluation/search.
+- `catmodel.py` — category G-scores and weekly matchup model; `catseason.py` — basketball season sim,
+  stress tests, category trades.
+- `intel.py` — league memory and track record; `external.py` — outside fetches (Sleeper, nflverse, id map,
+  ESPN site scoreboards, Open-Meteo), cached and fail-soft; `insights.py` — pure logic on that data.
 - `writes.py` — move payloads, lineup planning, POST to ESPN; `service.py` (`Hub`) — one method per tool.
 - `server.py` — FastMCP tools/prompts + INSTRUCTIONS; `remote.py` — token-protected stateless HTTP (Vercel).
 - `app.py` — Vercel entry (Python preset). `cli.py` — stdio server, `setup`, `doctor`.
@@ -20,6 +26,12 @@ MCP server for ESPN fantasy football + basketball. Python 3.10+, built on
 - Basketball day math uses US Eastern (`ESPN_TZ`); display uses the configured time zone.
 - `lineupLocked` describes the current scoring period only; future days use game start times.
 - Moves are always preview-first (`confirm=false`) and gated by `ESPN_ALLOW_WRITES`.
+- GM rules: objective = playoff odds under 90%, else title; starters only; a "clear win" helps in every
+  stress test; trade lineup math gives every team the best free agent per position (holes vs waivers).
+- Speed matters on Vercel (120 s limit, clients may time out sooner): avoid `statistics.mean` in hot loops;
+  `find_trades` has a time budget and reports coverage.
+- Outside data must never break a tool: fetchers return None on failure and tools say what was missing.
+- Scheduled briefings and the decision journal live on the `gm-journal` branch (no deploys from it).
 - Never commit secrets (`.env*`, `.vercel/`, config.toml are gitignored). `/health` shows yes/no only.
 
 ## Test / deploy

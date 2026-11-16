@@ -466,7 +466,12 @@ class Hub:
         if "fantasy_team" not in out:
             out["fantasy_team"] = "Free agent / waivers"
         if view.is_football:
-            out.update(self._football_card(view, p))
+            proj_pts: dict[int, float] = {}
+            if not view.is_categories:   # every week's projection from the public feed, in this league's scoring
+                weeks = range(max(1, view.scoring_period - 8), view.scoring_period + 2)
+                raw = h.client.public_projections([p.get("id")], weeks)
+                proj_pts = projections.weekly_points(view, raw, {p.get("id"): view.sport.position(p)}).get(p.get("id"), {})
+            out.update(self._football_card(view, p, proj_pts))
         else:
             out.update(self._basketball_card(view, p))
         news = self._news(h, pick["id"])
@@ -474,7 +479,8 @@ class Hub:
             out["news"] = news
         return out
 
-    def _football_card(self, view: LeagueView, p: dict) -> dict:
+    def _football_card(self, view: LeagueView, p: dict, proj_pts: dict | None = None) -> dict:
+        proj_pts = proj_pts or {}
         extra: dict[str, Any] = {}
         week = view.scoring_period
         outlooks = ((p.get("outlooks") or {}).get("outlooksByWeek") or {})
@@ -487,15 +493,18 @@ class Hub:
             actual = find_split(p, 0, 1, view.season, period=w)
             proj = find_split(p, 1, 1, view.season, period=w)
             game = view.pro.game(p.get("proTeamId"), w)
-            if not actual and not proj:
+            if not actual and not proj and w not in proj_pts:
                 if game is None and w < week:
                     log.append({"week": w, "game": "BYE"})
                 continue
+            proj_v = (proj or {}).get("appliedTotal")
+            if proj_v is None and w in proj_pts:
+                proj_v = proj_pts[w]
             log.append(compact({
                 "week": w,
                 "game": view.pro.matchup_label(game),
                 "pts": rnd((actual or {}).get("appliedTotal")),
-                "proj": rnd((proj or {}).get("appliedTotal")),
+                "proj": rnd(proj_v),
                 "stats": view._football_stat_line(actual, limit=8) or None,
             }))
         extra["weekly_log"] = log[-10:]
@@ -505,6 +514,7 @@ class Hub:
             upcoming.append(compact({
                 "week": w,
                 "game": view.pro.matchup_label(game) or "BYE",
+                "proj": rnd(proj_pts.get(w)) if game and w in proj_pts else None,
                 "opp_rank_vs_pos_now": view._oprk(p, game["opp_id"]) if game else None,
             }))
         if upcoming:
@@ -884,15 +894,18 @@ class Hub:
             "source": "nflverse weekly stats and snap counts" + ("" if snaps else " (snap counts unavailable)"),
         })
 
-    def _target_week(self, view: LeagueView) -> tuple[int, dict | None]:
-        """The NFL week to plan for: this week if any game hasn't kicked off, else next week."""
+    def _target_week(self, view: LeagueView) -> tuple[int, dict | None, list[str]]:
+        """The NFL week to plan for: this week while most of its games are still to play; once
+        only the Monday/late games are left, next week (the leftover games are listed)."""
         week = view.scoring_period
         sb = external.nfl_scoreboard(view.season, week)
-        statuses = [g["status"] for g in insights.game_lines(sb)["games"]]
-        if sb is not None and statuses and "STATUS_SCHEDULED" not in statuses:
-            week += 1
-            sb = external.nfl_scoreboard(view.season, week)
-        return week, sb
+        games = insights.game_lines(sb)["games"]
+        left = [g for g in games if g["status"] == "STATUS_SCHEDULED"]
+        if sb is not None and games and len(left) <= 2:
+            nxt = external.nfl_scoreboard(view.season, week + 1)
+            if nxt is not None:
+                return week + 1, nxt, [f"{g['away']} @ {g['home']}" for g in left]
+        return week, sb, []
 
     def game_environment(self, league=None, team=None) -> dict:
         h = self.resolve(league)
@@ -900,7 +913,7 @@ class Hub:
         tid = self._team(view, team)
         if not view.is_football:
             return self._header(h, view) | self._nba_environment(h, view, tid)
-        week, sb = self._target_week(view)
+        week, sb, leftover = self._target_week(view)
         if sb is None:
             raise UserError("ESPN's game lines are unavailable right now; try again later.")
         lines = insights.game_lines(sb)
@@ -923,7 +936,7 @@ class Hub:
                 "weather": insights.weather_flags(g, fc.get(g["id"])) if g["id"] in fc else None,
                 "your_players": (mine_by_team.get(g["home_id"], []) + mine_by_team.get(g["away_id"], [])) or None,
             }))
-        out = {"week": week, "games": games,
+        out = {"week": week, "still_to_play_last_week": leftover or None, "games": games,
                "teams_on_bye": [view.sport.pro_team(t) for t in lines["byes"]] or None,
                "source": "ESPN game lines (DraftKings) and Open-Meteo forecasts"
                          + (" (forecasts unavailable)" if points and forecasts is None else "")}

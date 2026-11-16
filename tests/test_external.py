@@ -60,6 +60,7 @@ def test_player_usage(football_hub, ext):
 def test_game_environment_moves_to_next_week_and_adds_weather(football_hub, ext):
     out = football_hub.game_environment()
     assert out["week"] == 11                      # week 10 is all final, so plan for week 11
+    assert "still_to_play_last_week" not in out
     games = out["games"]
     assert len(games) == 13 and len(out["teams_on_bye"]) == 6
     totals = [g["total"] for g in games if "total" in g]
@@ -99,6 +100,8 @@ def test_faab_bid_scales_with_gain_and_caps():
     assert insights.faab_bid(3.0, hist, 90, False) == "$10-$14"
     assert insights.faab_bid(3.0, hist, 90, True) == "$14-$18"
     assert insights.faab_bid(3.0, hist, 20, True) == "$8"     # never more than 40% of what's left
+    assert insights.faab_bid(1.5, hist, 90, False, "D/ST") == "$0-$1"   # streamers stay cheap
+    assert insights.faab_bid(1.5, hist, 90, True, "K") == "$1-$2"
 
 
 def test_waiver_advisor_football_protects_core(football_hub, ext):
