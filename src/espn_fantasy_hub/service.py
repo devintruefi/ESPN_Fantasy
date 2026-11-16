@@ -13,7 +13,7 @@ from typing import Any
 
 from pathlib import Path
 
-from . import analysis, catmodel, ffmodel, strategy, writes
+from . import analysis, catmodel, catseason, ffmodel, projections, strategy, trades, writes
 from .config import LeagueConfig, Settings
 from .discovery import discover
 from .espn import EspnError, LeagueClient, LeagueNotFound
@@ -95,6 +95,7 @@ class Hub:
         self._discovered_at = 0.0
         self.discovery_error: str | None = None
         self._lock = threading.Lock()
+        self._worlds: dict = {}
 
     # ---- league registry ------------------------------------------------------
     def handles(self) -> list[LeagueHandle]:
@@ -659,23 +660,76 @@ class Hub:
             return self._header(h, view) | strategy.football_schedule(view, tid)
         return self._header(h, view) | {"team": view.team_label(tid)} | catmodel.schedule_planner(view, tid)
 
-    def season_outlook(self, league=None, team=None) -> dict:
-        h = self.resolve(league)
-        view = self.view(h)
+    # ---- football world (shared by outlook, trades, waivers) ---------------------------
+    WORLD_TTL = 60
+
+    def _need_football_points(self, view: LeagueView, tool: str) -> None:
         if not view.is_football or view.is_categories:
-            raise UserError("season_outlook is for football points leagues. For category leagues use "
-                            "category_strategy and schedule_planner.")
-        tid = self._team(view, team)
+            raise UserError(f"{tool} works on football points leagues here; for basketball category leagues "
+                            "use category_strategy, schedule_planner and the basketball season_outlook.")
+
+    def _projection_points(self, h: LeagueHandle, view: LeagueView, extra_wraps=()) -> dict[int, dict[int, float]]:
+        """Complete weekly projections (recent weeks + this and next week) for every rostered
+        player and the given pool, scored with this league's rules."""
+        positions: dict[int, str] = {}
+        for tid in view.teams:
+            for e in view.roster_entries(tid):
+                p = player_of(e)
+                positions[p.get("id")] = view.sport.position(p)
+        for w in extra_wraps:
+            p = player_of(w)
+            positions[p.get("id")] = view.sport.position(p)
+        weeks = range(max(1, view.scoring_period - ffmodel.HIST_WEEKS), view.scoring_period + 2)
+        raw = h.client.public_projections([i for i in positions if i], weeks)
+        return projections.weekly_points(view, raw, positions) if raw else {}
+
+    def football_world(self, h: LeagueHandle, view: LeagueView) -> ffmodel.FootballWorld:
+        key = (h.cfg.sport, h.cfg.league_id, view.scoring_period)
+        hit = self._worlds.get(key)
+        if hit and time.monotonic() - hit[0] < self.WORLD_TTL:
+            return hit[1]
         cur = view.current_matchup_period
         past = []
         for mp in range(max(1, cur - ffmodel.HIST_WEEKS), cur):
             try:
-                past.append(h.client.scoreboard(mp, view._matchup_week(mp)))
+                past.append(h.client.scoreboard(mp, view._matchup_week(mp), final=True))
             except EspnError:
                 continue
         live = None if view.season_over else h.client.scoreboard(cur, view.scoring_period)
         pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
-        return self._header(h, view) | ffmodel.season_outlook(view, live, past, pool, tid)
+        proj = self._projection_points(h, view, pool)
+        world = ffmodel.FootballWorld(view, live, past, pool, proj)
+        self._worlds = {k: v for k, v in self._worlds.items() if time.monotonic() - v[0] < self.WORLD_TTL}
+        self._worlds[key] = (time.monotonic(), world)
+        return world
+
+    def category_season(self, h: LeagueHandle, view: LeagueView) -> catseason.CategorySeason:
+        key = ("cat", h.cfg.sport, h.cfg.league_id, view.scoring_period)
+        hit = self._worlds.get(key)
+        if hit and time.monotonic() - hit[0] < self.WORLD_TTL:
+            return hit[1]
+        pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
+        live = None
+        if not view.season_over:
+            try:
+                live = h.client.scoreboard(view.current_matchup_period, view.scoring_period)
+            except EspnError:
+                live = None
+        season = catseason.CategorySeason(view, pool, live)
+        self._worlds = {k: v for k, v in self._worlds.items() if time.monotonic() - v[0] < self.WORLD_TTL}
+        self._worlds[key] = (time.monotonic(), season)
+        return season
+
+    def season_outlook(self, league=None, team=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        if view.is_categories:
+            tid = self._team(view, team)
+            return self._header(h, view) | catseason.season_outlook(self.category_season(h, view), tid)
+        self._need_football_points(view, "season_outlook")
+        tid = self._team(view, team)
+        world = self.football_world(h, view)
+        return self._header(h, view) | ffmodel.season_outlook(view, None, [], [], tid, world=world)
 
     def strategy_playbook(self, league=None) -> dict:
         h = self.resolve(league)
@@ -795,18 +849,16 @@ class Hub:
             )
         return hits[0]
 
-    def trade_analyzer(self, league=None, give=None, receive=None, partner=None) -> dict:
-        h = self.resolve(league)
-        view = self.view(h)
-        me = self._team(view, None)
+    def _trade_sides(self, view: LeagueView, me: int, give, receive, partner) -> tuple[int, list[dict], list[dict]]:
+        """Resolve a trade's names to roster entries: (partner id, give wraps, receive wraps)."""
         give, receive = list(give or []), list(receive or [])
-        if not give and not receive:
-            raise UserError("Name the players you'd give and/or receive.")
         try:
             give_w = [writes.find_on_roster(view, view.roster_entries(me), n) for n in give]
         except writes.MoveError as e:
             raise UserError(str(e)) from None
         partner_id = self._team(view, partner) if partner else None
+        if partner_id == me:
+            raise UserError("That's your own team; name the team you'd trade with.")
         recv_w = []
         for n in receive:
             if partner_id:
@@ -820,7 +872,80 @@ class Hub:
                 recv_w.append(w)
         if partner_id is None:
             raise UserError("Say which team you're trading with.")
-        return self._header(h, view) | strategy.trade_analysis(view, me, partner_id, give_w, recv_w)
+        return partner_id, give_w, recv_w
+
+    def trade_analyzer(self, league=None, give=None, receive=None, partner=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        me = self._team(view, None)
+        if not give and not receive:
+            raise UserError("Name the players you'd give and/or receive.")
+        partner_id, give_w, recv_w = self._trade_sides(view, me, give, receive, partner)
+        if view.is_football and not view.is_categories:
+            world = self.football_world(h, view)
+            g = [world.players[player_of(w).get("id")] for w in give_w]
+            r = [world.players[player_of(w).get("id")] for w in recv_w]
+            out = trades.evaluate_trade(world, me, partner_id, g, r)
+            closed = trades.trade_window(view)
+            if closed:
+                out["notes"].insert(0, closed)
+            return self._header(h, view) | {"partner": view.team_label(partner_id)} | out
+        base = strategy.trade_analysis(view, me, partner_id, give_w, recv_w)
+        if view.is_categories:
+            try:
+                base |= catseason.evaluate_trade(self.category_season(h, view), me, partner_id,
+                                                 [player_of(w).get("id") for w in give_w],
+                                                 [player_of(w).get("id") for w in recv_w])
+            except ValueError as e:
+                raise UserError(str(e)) from None
+            closed = trades.trade_window(view)
+            if closed:
+                base["notes"] = [closed] + list(base.get("notes") or [])
+        return self._header(h, view) | base
+
+    def find_trades(self, league=None, partner=None, must_receive=None, must_give=None, max_players: int = 3) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        me = self._team(view, None)
+        closed = trades.trade_window(view)
+        if closed:
+            return self._header(h, view) | {"note": closed}
+        max_players = max(1, min(int(max_players or 3), 3))
+        partner_id = self._team(view, partner) if partner else None
+        if partner_id == me:
+            raise UserError("That's your own team; name the team you'd trade with.")
+        must_receive, must_give = list(must_receive or []), list(must_give or [])
+        recv_ids, owners = [], set()
+        for n in must_receive:
+            if partner_id:
+                try:
+                    w = writes.find_on_roster(view, view.roster_entries(partner_id), n)
+                except writes.MoveError as e:
+                    raise UserError(str(e)) from None
+                owners.add(partner_id)
+            else:
+                tid, w = self._find_owner(view, n, exclude=me)
+                owners.add(tid)
+            recv_ids.append(player_of(w).get("id"))
+        if len(owners) > 1:
+            raise UserError("The players you must receive are on different teams; a trade is with one team.")
+        partner_id = partner_id or (owners.pop() if owners else None)
+        try:
+            give_ids = [player_of(writes.find_on_roster(view, view.roster_entries(me), n)).get("id") for n in must_give]
+        except writes.MoveError as e:
+            raise UserError(str(e)) from None
+        if view.is_categories:
+            partners = [partner_id] if partner_id else [t for t in view.teams if t != me]
+            return self._header(h, view) | catseason.find_trades(self.category_season(h, view), me, partners,
+                                                                 recv_ids, give_ids, max_players)
+        self._need_football_points(view, "find_trades")
+        world = self.football_world(h, view)
+        partners = [partner_id] if partner_id else [t for t in view.teams if t != me]
+        out = trades.find_trades(world, me, partners,
+                                 must_get=[world.players[i] for i in recv_ids],
+                                 must_give=[world.players[i] for i in give_ids],
+                                 max_size=max_players)
+        return self._header(h, view) | out
 
     # ---- moves (writes) ---------------------------------------------------------
     def _write_context(self, league):
@@ -966,13 +1091,15 @@ class Hub:
 
     def propose_trade(self, league=None, partner=None, give=None, receive=None, confirm: bool = False) -> dict:
         h, view, me = self._write_context(league)
-        analysis_out = self.trade_analyzer(league, give, receive, partner)
-        partner_id = view.find_team(analysis_out["partner"].replace(" (you)", "")) or self._team(view, partner)
-        give_ids = [player_of(writes.find_on_roster(view, view.roster_entries(me), n))["id"] for n in give or []]
-        get_ids = [player_of(writes.find_on_roster(view, view.roster_entries(partner_id), n))["id"] for n in receive or []]
+        partner_id, give_w, recv_w = self._trade_sides(view, me, give, receive, partner)
+        analysis_out = self.trade_analyzer(league, give, receive, str(partner_id))
+        give_ids = [player_of(w)["id"] for w in give_w]
+        get_ids = [player_of(w)["id"] for w in recv_w]
+        keys = ("verdict", "your_odds", "starting_lineup_change_per_week", "summary",
+                "your_starting_lineup_value", "their_starting_lineup_value", "notes")
         out = self._header(h, view) | {
             "proposal": {"to": view.team_label(partner_id), "you_give": give, "you_get": receive, "expires_in_days": 2},
-            "analysis": {k: analysis_out[k] for k in ("summary", "your_starting_lineup_value", "their_starting_lineup_value") if k in analysis_out},
+            "analysis": {k: analysis_out[k] for k in keys if k in analysis_out},
             "experimental": "Trade proposals use an ESPN endpoint that hasn't been verified on a live league yet. Check the ESPN app after sending.",
         }
         if not confirm:

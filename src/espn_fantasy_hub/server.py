@@ -298,12 +298,13 @@ def build_server(hub: Hub | None = None) -> FastMCP:
 
     @mcp.tool(annotations=READ_ONLY)
     def season_outlook(league: LeagueArg = None, team: TeamArg = None) -> str:
-        """Football points leagues: simulates the rest of the regular season and the
-        playoff bracket from every team's roster (recent ESPN projections, byes,
-        injuries) and the live score of the current week. Returns the team's playoff,
-        bye and title odds, week-by-week win chances and bye holes, the final record
-        needed to make the playoffs, the free agents that most raise its lineup, and
-        every team's odds and strength."""
+        """Simulates the rest of the regular season and the playoff bracket and returns
+        the team's playoff, bye and title odds with a stress-test range, its matchup-by-
+        matchup win chances, the record needed, and every team's odds. Football points:
+        from every lineup (recent ESPN projections, byes, injuries, live score) plus the
+        best free-agent adds. Basketball categories: from per-game category production,
+        the live category totals of the current matchup, and injured-player return
+        assumptions."""
         return run(lambda h: h.season_outlook(league, team))
 
     @mcp.tool(annotations=READ_ONLY)
@@ -327,10 +328,30 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         partner: Annotated[str | None, Field(description="Trade partner team (optional; inferred from the players you receive).")] = None,
         league: LeagueArg = None,
     ) -> str:
-        """Evaluate a trade: each player's season and recent value, totals, how each
-        team's best starting lineup changes, and (category leagues) your per-game
-        category changes. Doesn't send anything."""
+        """Evaluate a trade (read-only) on what decides seasons: both teams' starting
+        lineups and season odds. Football points: lineup change per week under ESPN
+        projections and season averages, plus both teams' playoff/title odds under five
+        stress tests (same random draws before/after), roster/drop check, byes, injury
+        and rival/opponent warnings, and a verdict. Basketball categories: weekly all-play
+        win % change (season and last 15 days), per-category odds, and season odds under
+        stress tests. A deal is a clear win only if it helps in every stress test."""
         return run(lambda h: h.trade_analyzer(league, give, receive, partner))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def find_trades(
+        partner: Annotated[str | None, Field(description="Only search trades with this team (default: every team).")] = None,
+        must_receive: Annotated[list[str] | None, Field(description="Players you must get (all on one team).")] = None,
+        must_give: Annotated[list[str] | None, Field(description="Players you want to move.")] = None,
+        max_players: Annotated[int, Field(description="Most players per side, 1-3 (basketball: up to 2).")] = 3,
+        league: LeagueArg = None,
+    ) -> str:
+        """Search every trade (read-only) that improves your starting lineup under both
+        ESPN projections and season averages (basketball: season and last-15-day form),
+        starters only: every player in a deal must start for the team that gets him, no
+        bench throw-ins. Lists win-wins first, then deals that surely help you, each
+        stress-tested on season odds for both teams, and reports exactly what was
+        searched. Takes up to ~40 seconds."""
+        return run(lambda h: h.find_trades(league, partner, must_receive, must_give, max_players))
 
     # ---- moves --------------------------------------------------------------------
     @mcp.tool(annotations=WRITE)

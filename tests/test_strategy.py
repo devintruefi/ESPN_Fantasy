@@ -49,9 +49,9 @@ def test_trade_analyzer(football_hub, football_data):
     out = football_hub.trade_analyzer(give=["Tee Higgins"], receive=[their_player])
     assert out["partner"].startswith("Team 2")
     assert out["you_give"][0]["name"] == "Tee Higgins"
-    assert out["roster_spots"] == {"you": 0, "them": 0}
-    assert "before" in out["your_starting_lineup_value"]
-    assert out["summary"]
+    assert out["roster_check"]["you"]["after_trade"] <= out["roster_check"]["you"]["roster_spots"]
+    assert "by_projections" in out["starting_lineup_change_per_week"]["you"]
+    assert out["verdict"]
     with pytest.raises(UserError):
         football_hub.trade_analyzer(give=["Not A Real Guy"], receive=[their_player])
 

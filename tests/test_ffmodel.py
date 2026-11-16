@@ -92,9 +92,9 @@ def test_season_outlook_after_regular_season(football_hub):
     assert "regular season is over" in out["note"]
 
 
-def test_season_outlook_rejects_basketball(basketball_hub):
-    with pytest.raises(UserError):
-        basketball_hub.season_outlook()
+def test_basketball_outlook_after_regular_season_says_so(basketball_hub):
+    out = basketball_hub.season_outlook()
+    assert "regular season is over" in out["note"]
 
 
 def test_unprojected_defense_gets_typical_value(football_hub, football_data):

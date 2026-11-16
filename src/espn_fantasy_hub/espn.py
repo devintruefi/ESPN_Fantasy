@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 import requests
@@ -20,6 +21,7 @@ from espn_api.requests.espn_requests import (
 )
 
 from . import http
+from .projections import parse_public_players
 from .sports import Sport
 
 
@@ -76,6 +78,13 @@ class _TTLCache:
 # Season-wide data (pro schedules, player index) is shared by every league of
 # the same sport and season, so cache it at module level.
 _SEASON_CACHE = _TTLCache()
+
+
+# Weekly projected stat lines from ESPN's public player feed, per (game, season, player).
+# Shared by every league of the sport: the NFL's projections don't depend on the league.
+PUBLIC_PLAYERS_URL = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/{game}/seasons/{season}/players"
+TTL_PROJ = 3600
+_PROJ_CACHE: dict[tuple, tuple[float, frozenset, dict]] = {}
 
 
 def _call(fn: Callable[[], Any], what: str, league_id: int | None = None):
@@ -147,11 +156,12 @@ class LeagueClient:
             params={"view": "mRoster", "scoringPeriodId": scoring_period},
         )
 
-    def scoreboard(self, matchup_period: int, scoring_period: int) -> dict:
-        """Live scores + per-player box scores for one matchup period."""
+    def scoreboard(self, matchup_period: int, scoring_period: int, final: bool = False) -> dict:
+        """Live scores + per-player box scores for one matchup period (``final``: a finished
+        period, which never changes, so it is cached much longer)."""
         return self._league_get(
             ("scoreboard", matchup_period, scoring_period),
-            TTL_LIVE,
+            TTL_SLOW if final else TTL_LIVE,
             "matchups",
             params={"view": ["mMatchupScore", "mScoreboard"], "scoringPeriodId": scoring_period},
             headers=_filter_header(
@@ -195,10 +205,10 @@ class LeagueClient:
             ),
         )
 
-    def transactions(self, scoring_period: int) -> dict:
+    def transactions(self, scoring_period: int, final: bool = False) -> dict:
         return self._league_get(
             ("tx", scoring_period),
-            TTL_LEAGUE,
+            TTL_SLOW if final else TTL_LEAGUE,
             "transactions",
             params={"view": "mTransactions2", "scoringPeriodId": scoring_period},
         )
@@ -236,6 +246,52 @@ class LeagueClient:
             900,
             lambda: _call(lambda: self.req.get_player_news(player_id), "player news", self.league_id),
         )
+
+    def public_projections(self, player_ids, weeks) -> dict[int, dict[int, dict]]:
+        """{player id: {week: projected raw stats}} from ESPN's public player feed.
+
+        Fetches only players not already cached for these weeks, 50 per request, in
+        parallel. A failed batch is skipped (callers fall back to box-score history)."""
+        weeks = tuple(sorted({int(w) for w in weeks if int(w) >= 1}))
+        if not weeks:
+            return {}
+        want = {int(i) for i in player_ids if i}
+        now = time.monotonic()
+        out: dict[int, dict[int, dict]] = {}
+        need = []
+        for pid in want:
+            hit = _PROJ_CACHE.get((self.sport.game, self.season, pid))
+            if hit and now - hit[0] < TTL_PROJ and set(weeks) <= hit[1]:
+                out[pid] = {w: hit[2][w] for w in weeks if w in hit[2]}
+            else:
+                need.append(pid)
+        if not need:
+            return out
+        url = PUBLIC_PLAYERS_URL.format(game=self.sport.game, season=self.season)
+        extra = [f"11{self.season}{w}" for w in weeks]
+
+        def fetch(batch):
+            flt = {"filterIds": {"value": batch},
+                   "filterStatsForTopScoringPeriodIds": {"value": 1, "additionalValue": extra}}
+            try:
+                r = http.session().get(url, params={"view": "kona_playercard"}, timeout=20, headers={
+                    "X-Fantasy-Filter": json.dumps(flt), "X-Fantasy-Platform": "kona-PROD",
+                    "X-Fantasy-Source": "kona"})
+                if r.status_code != 200:
+                    return {}
+                return parse_public_players(r.json(), self.season)
+            except (requests.exceptions.RequestException, ValueError):
+                return {}
+
+        batches = [need[i:i + 50] for i in range(0, len(need), 50)]
+        with ThreadPoolExecutor(max_workers=min(6, len(batches))) as pool:
+            results = list(pool.map(fetch, batches))
+        stamp = time.monotonic()
+        for res in results:
+            for pid, by_week in res.items():
+                _PROJ_CACHE[(self.sport.game, self.season, pid)] = (stamp, frozenset(weeks), by_week)
+                out[pid] = {w: by_week[w] for w in weeks if w in by_week}
+        return out
 
     def clear(self) -> None:
         self._cache.clear()

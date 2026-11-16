@@ -46,7 +46,7 @@ class FakeClient:
         self.calls.append(("roster", scoring_period))
         return self.d.get("roster_override", self.d["core"])
 
-    def scoreboard(self, matchup_period, scoring_period):
+    def scoreboard(self, matchup_period, scoring_period, final=False):
         self.calls.append(("scoreboard", matchup_period, scoring_period))
         if "scoreboard_current" in self.d:
             cur = self.d["core"]["status"]["currentMatchupPeriod"]
@@ -62,10 +62,34 @@ class FakeClient:
         self.calls.append(("cards", tuple(extra_splits)))
         return self.d["card"]
 
-    def transactions(self, scoring_period):
+    def transactions(self, scoring_period, final=False):
         if scoring_period == self.d["core"]["scoringPeriodId"] and "transactions" in self.d:
             return self.d["transactions"]
         return {"transactions": []}
+
+    def public_projections(self, player_ids, weeks):
+        """Raw projected stat lines the way ESPN's public feed returns them, rebuilt from the
+        saved league (current week from rosters/pool, last week from the previous scoreboard)."""
+        self.calls.append(("public_projections", len(list(player_ids)), tuple(weeks)))
+        if self.d.get("public_unavailable"):
+            return {}
+        out = {}
+
+        def take(p):
+            for s in p.get("stats") or []:
+                if s.get("statSourceId") == 1 and s.get("statSplitTypeId") == 1 and s.get("stats"):
+                    out.setdefault(p["id"], {})[s["scoringPeriodId"]] = s["stats"]
+
+        for t in self.d["core"].get("teams") or []:
+            for e in (t.get("roster") or {}).get("entries") or []:
+                take(e["playerPoolEntry"]["player"])
+        for w in (self.d.get("pool") or {}).get("players") or []:
+            take(w["player"])
+        for m in (self.d.get("scoreboard_prev") or {}).get("schedule") or []:
+            for side in (m.get("home") or {}, m.get("away") or {}):
+                for e in (side.get("rosterForCurrentScoringPeriod") or {}).get("entries") or []:
+                    take(e["playerPoolEntry"]["player"])
+        return out
 
     def positional_ratings(self, scoring_period):
         return self.d.get("pos_ratings", {})
