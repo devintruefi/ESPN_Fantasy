@@ -8,12 +8,13 @@ import html
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
 from pathlib import Path
 
-from . import analysis, catmodel, catseason, ffmodel, projections, strategy, trades, writes
+from . import analysis, catmodel, catseason, ffmodel, intel, projections, strategy, trades, writes
 from .config import LeagueConfig, Settings
 from .discovery import discover
 from .espn import EspnError, LeagueClient, LeagueNotFound
@@ -730,6 +731,66 @@ class Hub:
         tid = self._team(view, team)
         world = self.football_world(h, view)
         return self._header(h, view) | ffmodel.season_outlook(view, None, [], [], tid, world=world)
+
+    # ---- league memory and track record --------------------------------------------
+    @staticmethod
+    def _parallel(fn, items, workers: int = 6) -> list:
+        items = list(items)
+        if not items:
+            return []
+        with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
+            return list(pool.map(fn, items))
+
+    def league_intel(self, league=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        me = self._team(view, None)
+        cur = view.scoring_period
+        periods = list(range(1, cur + 1)) if view.is_football else list(range(max(1, cur - 27), cur + 1))
+
+        def fetch(sp):
+            try:
+                return h.client.transactions(sp, final=sp < cur)
+            except EspnError:
+                return {}
+
+        raws = self._parallel(fetch, periods)
+        ids = {it.get("playerId") for r in raws for tx in r.get("transactions") or [] for it in tx.get("items") or []}
+        ids |= {int(pid) for t in view.teams.values() for pid in ((t.get("tradeBlock") or {}).get("players") or {})}
+        names = self._names(h, ids, view.final_scoring_period)
+        odds = needs = None
+        live_season = not view.season_over and view.current_matchup_period <= (view.reg_season_periods or 0)
+        if view.is_football and not view.is_categories:
+            world = self.football_world(h, view)
+            needs = intel.football_needs(world)
+            if live_season:
+                odds = world.simulate(world.strengths(world.all_rosters()), sims=3000, seed=7, tau=4.0)["teams"]
+        elif view.is_categories and view.scoring_type != "ROTO":
+            season = self.category_season(h, view)
+            needs = intel.category_needs(season.m, list(view.teams))
+            if live_season:
+                odds = season.simulate(season.rosters(), catseason.SCENARIOS[0], sims=3000, seed=7)["teams"]
+        span = f"weeks 1-{cur}" if view.is_football else f"the last {len(periods)} days"
+        return self._header(h, view) | intel.league_intel(view, me, raws, names, odds, needs, span)
+
+    def track_record(self, league=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        me = self._team(view, None)
+        if view.is_categories:
+            return self._header(h, view) | intel.category_track_record(view, me)
+        self._need_football_points(view, "track_record")
+        cur = view.current_matchup_period if not view.season_over else max(view.matchup_periods or [1]) + 1
+
+        def fetch(mp):
+            try:
+                return mp, h.client.scoreboard(mp, view._matchup_week(mp), final=True)
+            except EspnError:
+                return mp, None
+
+        past = {mp: raw for mp, raw in self._parallel(fetch, range(1, cur)) if raw}
+        sd, bias, _ = ffmodel.score_noise(view, list(past.values()))
+        return self._header(h, view) | intel.football_track_record(view, me, past, sd, bias)
 
     def strategy_playbook(self, league=None) -> dict:
         h = self.resolve(league)

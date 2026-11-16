@@ -353,6 +353,24 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         searched. Takes up to ~40 seconds."""
         return run(lambda h: h.find_trades(league, partner, must_receive, must_give, max_players))
 
+    @mcp.tool(annotations=READ_ONLY)
+    def league_intel(league: LeagueArg = None) -> str:
+        """League memory: every manager's situation (simulated playoff/title odds:
+        contender, bubble or long shot), activity (moves, recent adds/drops, FAAB left),
+        trade-block players, positional needs and surplus (basketball: weakest and
+        strongest categories), trades this season and who traded with whom, winning FAAB
+        bids, and the teams whose needs fit yours best as trade targets."""
+        return run(lambda h: h.league_intel(league))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def track_record(league: LeagueArg = None) -> str:
+        """How much to trust the model, and how your decisions have done. Football: how
+        well projection-based win odds predicted this league's matchups (Brier score,
+        calibration) and an audit of your lineups (points vs the best lineup by
+        projections and in hindsight, losses a better lineup would have flipped).
+        Basketball: category win rates for you and the league."""
+        return run(lambda h: h.track_record(league))
+
     # ---- moves --------------------------------------------------------------------
     @mcp.tool(annotations=WRITE)
     def set_lineup(
