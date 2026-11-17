@@ -128,3 +128,13 @@ def test_stress_range_contains_headline_numbers(football_hub):
     for k in ("playoffs", "title"):
         lo, hi = (float(x) for x in you["stress_test_range"][f"{k}_pct"].split("-"))
         assert lo <= you[f"{k}_pct"] <= hi
+
+
+def test_current_week_assumes_best_lineup_before_kickoff(football_hub):
+    """A team with a starter ruled out and a healthy backup on the bench is projected with the backup."""
+    h = football_hub._handles[0]
+    view = football_hub.view(h)
+    world = football_hub.football_world(h, view)
+    for tid, (so_far, proj) in world.live.items():
+        if so_far == 0:
+            assert proj >= world.lineup_total(world.team(tid), view.scoring_period) - 1e-9

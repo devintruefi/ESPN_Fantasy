@@ -265,6 +265,14 @@ class FootballWorld:
         self.cur_mp = view.current_matchup_period
         self.sched = self._schedule()
         self.live = _live(view, live_raw)
+        # Before any game of the week has started, ESPN's projection follows each team's lineup as
+        # currently set, so an OUT/DOUBTFUL starter with a healthy backup on the bench understates
+        # that team. Assume every team will start its best healthy lineup until games begin.
+        if not view.season_over:
+            for tid, (so_far, proj) in list(self.live.items()):
+                if so_far == 0:
+                    best = self.lineup_total(self.team(tid), view.scoring_period)
+                    self.live[tid] = (so_far, max(proj, best))
         self.playoff_mps = sorted(mp for mp in view.matchup_periods if mp > self.reg_end)
         self.n_playoff = int((view.settings.get("scheduleSettings") or {}).get("playoffTeamCount") or 0)
         self.weeks_all = sorted({w for mp in list(self.sched) + self.playoff_mps for w in self.weeks_of(mp)})
