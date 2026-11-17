@@ -1,1 +1,14 @@
 made_on,league,kind,subject,prob,outcome,graded_on,note
+2026-11-17,FB-A,matchup,week 11 vs team 1,0.83,,,projected 95.7-62.1
+2026-11-17,FB-A,playoffs,2026 regular season,0.668,,,stress 0.644-0.685; record 5-5
+2026-11-17,FB-A,title,2026,0.034,,,stress 0.027-0.042
+2026-11-17,FB-A,move,trade team 10: give Bijan Robinson+Trey McBride+Stefon Diggs; get Bhayshul Tuten+Tee Higgins+Chris Olave,3.7,,,playoffs +3.7..+4.1 pts; medium
+2026-11-17,FB-A,move,waiver: add Deshaun Watson; drop Alec Pierce,,,,not stress-tested; lineup +0.7..+2.3 pts/wk; low
+2026-11-17,FB-B,matchup,week 11 vs team 3,0.64,,,projected 115.3-105.2
+2026-11-17,FB-B,playoffs,2026 regular season,0.987,,,stress 0.972-0.993; record 6-4
+2026-11-17,FB-B,title,2026,0.271,,,stress 0.250-0.285
+2026-11-17,FB-B,move,trade team 9: give Josh Jacobs+Jordan Love; get Trey McBride,1.8,,,title +1.8..+9.3 pts; medium
+2026-11-17,BB,matchup,matchup 5 vs team 12,0.81,,,live categories + games left
+2026-11-17,BB,playoffs,2027 regular season,0.993,,,stress 0.771-0.990; record 4-0
+2026-11-17,BB,title,2027,0.423,,,stress 0.050-0.414
+2026-11-17,BB,move,trade team 8: give Ace Bailey; get Trae Young+Jrue Holiday (drop Jerami Grant),2.9,,,title +2.9..+6.0 pts; medium
