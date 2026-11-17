@@ -83,7 +83,7 @@ cold streak. Never suggest dropping a player whose season value is higher than t
 player being added (`add_player` previews show a `value_check` and a CAUTION warning).
 If you don't know which spots the user rotates, ask.
 
-MOVES (`set_lineup`, `add_player`, `drop_player`, `propose_trade`) change the user's
+MOVES (`set_lineup`, `add_player`, `drop_player`, `cancel_claim`, `propose_trade`) change the user's
 real team. Always call them first WITHOUT confirm to get a preview, show the user
 exactly what will change, and call again with confirm=true only after they say yes
 (unless they have explicitly told you to act without asking). Trade proposals are
@@ -451,6 +451,22 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         """Pick up a free agent (immediate) or put in a waiver claim (processed at
         waiver time), optionally dropping someone. Preview first, then confirm."""
         return run(lambda h: h.add_player(league, add, drop, bid, confirm))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def pending_claims(league: LeagueArg = None) -> str:
+        """The user's waiver claims still waiting to process: who each adds and drops,
+        the FAAB bid, when it was submitted, and its id (for cancel_claim)."""
+        return run(lambda h: h.pending_claims(league))
+
+    @mcp.tool(annotations=WRITE)
+    def cancel_claim(
+        claim: Annotated[str, Field(description="The player the claim adds, or the claim id from pending_claims.")],
+        league: LeagueArg = None,
+        confirm: ConfirmArg = False,
+    ) -> str:
+        """Withdraw one of the user's pending waiver claims (to change a bid or a drop,
+        cancel it and submit a new claim with add_player). Preview first, then confirm."""
+        return run(lambda h: h.cancel_claim(league, claim, confirm))
 
     @mcp.tool(annotations=WRITE)
     def drop_player(

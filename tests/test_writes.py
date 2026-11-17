@@ -168,3 +168,52 @@ def test_add_player_warns_when_dropping_better_player(football_data, monkeypatch
     prev = hub.add_player(add="Tee Higgins", drop="Tank Dell")
     assert not any(w.startswith("CAUTION") for w in prev.get("warnings", []))
     assert not posted
+
+
+def test_cancel_claim_payload():
+    p = writes.cancel_claim_payload(1, SWID, 11, "abc-123")
+    assert p["type"] == "WAIVER" and p["executionType"] == "CANCEL"
+    assert p["relatedTransactionId"] == "abc-123" and p["items"] == [] and p["teamId"] == 1
+
+
+def _claim(tid, team, add, drop, bid, ms, status="PENDING", related=None, kind="WAIVER"):
+    tx = {"id": tid, "type": kind, "status": status, "teamId": team, "bidAmount": bid, "proposedDate": ms,
+          "items": [{"type": "ADD", "playerId": add}] + ([{"type": "DROP", "playerId": drop}] if drop else [])}
+    if related:
+        tx["relatedTransactionId"] = related
+    return tx
+
+
+def test_pending_claims_and_cancel(football_data, monkeypatch):
+    posted = []
+    hub = writable_hub(football_data, monkeypatch, posted)
+    h = hub.handles()[0]
+    view = hub.view(h)
+    me = view.my_team_id
+    roster_ids = [player_of(e)["id"] for e in view.roster_entries(me)]
+    a, b, c = 9001, 9002, 9003
+    queue = {"pendingTransactions": [
+        _claim("live-1", me, a, roster_ids[-1], 9, 1_700_000_000_000),
+        _claim("old-1", me, b, roster_ids[-1], 3, 1_699_000_000_000),
+        _claim("theirs", me + 1, c, None, 4, 1_700_000_000_000),
+    ]}
+    log = {"transactions": [_claim("cxl", me, b, None, 0, 1_700_100_000_000, status="CANCELED", related="old-1")]}
+    monkeypatch.setattr(h.client, "pending_transactions", lambda: queue, raising=False)
+    monkeypatch.setattr(h.client, "transactions", lambda sp, final=False: log)
+    monkeypatch.setattr(hub, "_names", lambda h_, ids, sp: {a: "Chiefs D/ST", b: "Bills D/ST", c: "Jets D/ST"})
+    out = hub.pending_claims()
+    assert [x["id"] for x in out["pending_claims"]] == ["live-1"]   # cancelled and other teams' claims excluded
+    assert out["pending_claims"][0]["add"] == ["Chiefs D/ST"]
+    assert out["pending_claims"][0].get("bid") == (9 if view.uses_faab else None)
+    with pytest.raises(UserError, match="No pending claim"):
+        hub.cancel_claim(claim="Bills D/ST")
+    prev = hub.cancel_claim(claim="chiefs d/st")
+    assert prev["claim_id"] == "live-1" and not posted
+    res = hub.cancel_claim(claim="live-1", confirm=True)
+    assert posted[-1]["executionType"] == "CANCEL" and posted[-1]["relatedTransactionId"] == "live-1"
+    assert res["status"] == "SUBMITTED" and res["verified_in_espn"] is False  # fake queue still lists it
+
+
+def test_cancel_claim_needs_writes(football_hub):
+    with pytest.raises(UserError, match="turned off"):
+        football_hub.cancel_claim(claim="anything")

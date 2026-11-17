@@ -74,6 +74,16 @@ def add_drop_payload(team_id, swid, scoring_period, add_id=None, drop_id=None, w
     return payload
 
 
+def cancel_claim_payload(team_id, swid, scoring_period, claim_id: str) -> dict:
+    """Withdraw a pending waiver claim: same transaction type, executionType CANCEL, pointing at the claim."""
+    return base_payload(team_id, swid, scoring_period) | {
+        "type": "WAIVER",
+        "executionType": "CANCEL",
+        "relatedTransactionId": claim_id,
+        "items": [],
+    }
+
+
 def trade_payload(team_id, swid, scoring_period, partner_id, give_ids, get_ids, now_ms: int, days_valid=2) -> dict:
     items = [
         {"playerId": pid, "type": "TRADE", "fromTeamId": team_id, "toTeamId": partner_id} for pid in give_ids

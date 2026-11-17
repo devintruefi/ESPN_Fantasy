@@ -1371,6 +1371,59 @@ class Hub:
         result = self._submit(h, writes.add_drop_payload(me, self.settings.swid, view.scoring_period, drop_id=player_of(w)["id"]))
         return out | {"status": "SUBMITTED"} | result
 
+    def _my_claims(self, h: LeagueHandle, view, me: int) -> tuple[list[dict], str]:
+        raws, source = [], "ESPN's waiver queue"
+        try:
+            raws.append(h.client.pending_transactions())
+        except EspnError:
+            source = "the transaction log (ESPN's waiver queue was unavailable)"
+        sp = view.scoring_period
+        raws += [h.client.transactions(p) for p in (sp, sp - 1) if p >= 1]
+        ids = {it.get("playerId") for r in raws for tx in view._tx_rows(r) for it in tx.get("items") or []}
+        names = self._names(h, ids, view.final_scoring_period)
+        return view.pending_claims(raws, names, me), source
+
+    def pending_claims(self, league=None) -> dict:
+        h = self.resolve(league)
+        view = self.view(h)
+        me = view.my_team_id
+        if me is None:
+            raise UserError("Couldn't identify your team in this league.")
+        claims, source = self._my_claims(h, view, me)
+        for c in claims:
+            c.pop("add_ids", None)
+        out = self._header(h, view) | {"team": view.team_label(me), "pending_claims": claims, "source": source}
+        if view.uses_faab:
+            out["faab_left"] = view.team_overview(me).get("faab_left")
+        return out
+
+    def cancel_claim(self, league=None, claim: str = "", confirm: bool = False) -> dict:
+        h, view, me = self._write_context(league)
+        claims, _ = self._my_claims(h, view, me)
+        q = views_norm(claim or "")
+        hits = [c for c in claims if c["id"] == (claim or "").strip()
+                or any(views_norm(n) == q for n in c.get("add", []))]
+        if not hits:
+            raise UserError("No pending claim of yours matches " + repr(claim) + ". Pending: " + (
+                "; ".join(f"{', '.join(c.get('add', []))} (id {c['id']})" for c in claims) or "none") + ".")
+        if len(hits) > 1:
+            raise UserError("Several pending claims match; pass the claim id instead: " + "; ".join(
+                f"{', '.join(c.get('add', []))} dropping {', '.join(c.get('drop', [])) or 'nobody'}"
+                f"{' $' + str(c['bid']) if c.get('bid') is not None else ''} (id {c['id']})" for c in hits))
+        c = hits[0]
+        desc = f"Cancel waiver claim: add {', '.join(c.get('add', []))}"
+        if c.get("drop"):
+            desc += f", drop {', '.join(c['drop'])}"
+        if c.get("bid") is not None:
+            desc += f", bid ${c['bid']}"
+        out: dict[str, Any] = self._header(h, view) | {"team": view.team_label(me), "changes": [desc], "claim_id": c["id"]}
+        if not confirm:
+            return out | {"status": self.PREVIEW_NOTE}
+        result = self._submit(h, writes.cancel_claim_payload(me, self.settings.swid, view.scoring_period, c["id"]))
+        still, _ = self._my_claims(h, view, me)
+        result["verified_in_espn"] = all(x["id"] != c["id"] for x in still)
+        return out | {"status": "SUBMITTED"} | result
+
     def propose_trade(self, league=None, partner=None, give=None, receive=None, confirm: bool = False) -> dict:
         h, view, me = self._write_context(league)
         partner_id, give_w, recv_w = self._trade_sides(view, me, give, receive, partner)

@@ -213,6 +213,12 @@ class LeagueClient:
             params={"view": "mTransactions2", "scoringPeriodId": scoring_period},
         )
 
+    def pending_transactions(self) -> dict:
+        """ESPN's queue of unprocessed waiver claims (and pending trades)."""
+        return self._league_get(
+            "pending_tx", TTL_LIVE, "pending waiver claims", params={"view": "mPendingTransactions"}
+        )
+
     def positional_ratings(self, scoring_period: int) -> dict:
         return self._league_get(
             ("posratings", scoring_period),

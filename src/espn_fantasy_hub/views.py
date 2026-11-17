@@ -1017,6 +1017,48 @@ class LeagueView:
             r.pop("_sort", None)
         return rows
 
+    @staticmethod
+    def _tx_rows(raw: dict) -> list[dict]:
+        rows = []
+        for key in ("pendingTransactions", "transactions"):
+            v = (raw or {}).get(key)
+            if isinstance(v, list):
+                rows.extend(t for t in v if isinstance(t, dict))
+        return rows
+
+    def pending_claims(self, raws: Iterable[dict], names: dict[int, str], team_id: int) -> list[dict]:
+        """The team's waiver claims that are still in ESPN's queue, oldest first.
+
+        A claim stays PENDING in the transaction log even after it is cancelled or processed;
+        what ends it is a later transaction whose relatedTransactionId points back at it."""
+        all_tx: dict[str, dict] = {}
+        for raw in raws:
+            for tx in self._tx_rows(raw):
+                if tx.get("id"):
+                    all_tx.setdefault(str(tx["id"]), tx)
+        ended = {str(t.get("relatedTransactionId")) for t in all_tx.values() if t.get("relatedTransactionId")}
+        out = []
+        for tid, tx in all_tx.items():
+            if tx.get("type") != "WAIVER" or tx.get("status") != "PENDING" or tx.get("teamId") != team_id:
+                continue
+            if tid in ended or tx.get("relatedTransactionId"):
+                continue
+            items = tx.get("items") or []
+            when = ms_to_dt(tx.get("proposedDate") or tx.get("processDate"), self.tz)
+            out.append(compact({
+                "id": tid,
+                "add": [names.get(it.get("playerId"), str(it.get("playerId"))) for it in items if it.get("type") == "ADD"],
+                "drop": [names.get(it.get("playerId"), str(it.get("playerId"))) for it in items if it.get("type") == "DROP"],
+                "add_ids": [it.get("playerId") for it in items if it.get("type") == "ADD"],
+                "bid": tx.get("bidAmount") if self.uses_faab else None,
+                "submitted": fmt_time(when),
+                "_sort": when.timestamp() if when else 0,
+            }))
+        out.sort(key=lambda r: r.get("_sort", 0))
+        for r in out:
+            r.pop("_sort", None)
+        return out
+
     # ---- draft ---------------------------------------------------------------
     def draft(self, raw: dict, names: dict[int, str], team_id=None) -> dict:
         detail = raw.get("draftDetail") or {}

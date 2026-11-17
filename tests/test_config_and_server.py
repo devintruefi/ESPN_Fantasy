@@ -78,7 +78,7 @@ def test_server_tools(football_hub):
     tools = asyncio.run(mcp.list_tools())
     names = {t.name for t in tools}
     assert {"my_leagues", "lineup_check", "free_agents", "matchup_detail", "player_info", "standings"} <= names
-    writes = {"set_lineup", "add_player", "drop_player", "propose_trade"}
+    writes = {"set_lineup", "add_player", "drop_player", "cancel_claim", "propose_trade"}
     assert writes <= names
     for t in tools:
         if t.name in writes:

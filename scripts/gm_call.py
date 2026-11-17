@@ -6,7 +6,7 @@
     python3 scripts/gm_call.py --list
 
 Used by scheduled GM briefings. Write tools (set_lineup, add_player, drop_player,
-propose_trade) are refused here, whatever is asked.
+cancel_claim, propose_trade) are refused here, whatever is asked.
 
 Authentication: the server takes "Authorization: Bearer <token>". In a Claude cloud
 environment the token is saved as a network secret for the server's host, and the
@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 
 URL = os.environ.get("GM_SERVER_URL", "https://espnfantasy1.vercel.app/mcp")
-WRITE_TOOLS = {"set_lineup", "add_player", "drop_player", "propose_trade"}
+WRITE_TOOLS = {"set_lineup", "add_player", "drop_player", "cancel_claim", "propose_trade"}
 
 
 def rpc(method: str, params: dict) -> dict:
