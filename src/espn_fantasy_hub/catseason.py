@@ -342,8 +342,11 @@ def season_outlook(season: CategorySeason, team_id, sims: int = 5000) -> dict:
     def pct(x):
         return round(100.0 * x, 1)
 
-    lo = {k: min(stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS) for k in ("playoffs", "bye", "title")}
-    hi = {k: max(stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS) for k in ("playoffs", "bye", "title")}
+    # the range always contains the headline number (separate runs differ by sampling noise)
+    lo = {k: min([stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS] + [tally[team_id][k]])
+          for k in ("playoffs", "bye", "title")}
+    hi = {k: max([stress[s["key"]]["teams"][team_id][k] for s in SCENARIOS] + [tally[team_id][k]])
+          for k in ("playoffs", "bye", "title")}
     by_test = [compact({"test": s["label"], "playoffs_pct": pct(stress[s["key"]]["teams"][team_id]["playoffs"]),
                         "bye_pct": pct(stress[s["key"]]["teams"][team_id]["bye"]) if res["has_bye"] else None,
                         "title_pct": pct(stress[s["key"]]["teams"][team_id]["title"])}) for s in SCENARIOS]

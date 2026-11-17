@@ -121,3 +121,10 @@ def test_unprojected_defense_gets_typical_value(football_hub, football_data):
     unprojected = [a for a in outlook_with([season]) if a["name"] == "Test D/ST"]
     assert projected and projected[0]["value_per_game"] == 15.0
     assert not unprojected or unprojected[0]["value_per_game"] < 10
+
+
+def test_stress_range_contains_headline_numbers(football_hub):
+    you = football_hub.season_outlook()["your_outlook"]
+    for k in ("playoffs", "title"):
+        lo, hi = (float(x) for x in you["stress_test_range"][f"{k}_pct"].split("-"))
+        assert lo <= you[f"{k}_pct"] <= hi
