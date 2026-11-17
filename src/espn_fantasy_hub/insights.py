@@ -306,10 +306,10 @@ def waiver_plan_football(world, me, faab: dict | None, faab_left: float | None, 
     view = world.view
     mine = world.team(me)
     core = regular_starters(view, mine)
-    base = world.lineup_score(mine)
+    base = world.lineup_score(mine, fill=False)   # price pickups against your real holes
     droppable = [p for p in mine if p["name"] not in core and not p["in_ir"]
                  and not (p["status"] in ("OUT", "INJURY_RESERVE") and p["base"] >= 12)]
-    droppable.sort(key=lambda p: world.lineup_score([q for q in mine if q is not p]) - base, reverse=True)
+    droppable.sort(key=lambda p: world.lineup_score([q for q in mine if q is not p], fill=False) - base, reverse=True)
     rotation = droppable[:max_drops]
     rows = []
     for pid in world.free_agents:
@@ -318,13 +318,14 @@ def waiver_plan_football(world, me, faab: dict | None, faab_left: float | None, 
             continue
         best = None
         for d in rotation:
-            g = world.lineup_score([q for q in mine if q is not d] + [p]) - base
+            g = world.lineup_score([q for q in mine if q is not d] + [p], fill=False) - base
             if best is None or g > best[0]:
                 best = (g, d)
         if not best or best[0] <= 0.2:
             continue
         g, d = best
-        g_avg = world.lineup_score([q for q in mine if q is not d] + [p], "avg") - world.lineup_score(mine, "avg")
+        g_avg = (world.lineup_score([q for q in mine if q is not d] + [p], "avg", fill=False)
+                 - world.lineup_score(mine, "avg", fill=False))
         hot = p["id"] in trending
         rows.append(compact({
             "add": f"{p['name']} ({p['pos']}, {p['nfl']})", "status": p["status"],

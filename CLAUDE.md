@@ -28,6 +28,12 @@ MCP server for ESPN fantasy football + basketball. Python 3.10+, built on
 - Moves are always preview-first (`confirm=false`) and gated by `ESPN_ALLOW_WRITES`.
 - GM rules: objective = playoff odds under 90%, else title; starters only; a "clear win" helps in every
   stress test; trade lineup math gives every team the best free agent per position (holes vs waivers).
+- Empty slots get filled (user's standing rule): any team with no eligible starter for a slot (no D/ST,
+  bye, injury) is assumed to pick up the best free agent for it before the week starts, and every team
+  starts its best healthy lineup. `FootballWorld.lineup_total` does this by default; pass `fill=False`
+  only when pricing the user's own pickup against the real hole (waiver advice, best adds).
+- Waiver claims: `pending_claims` lists the queue with ids; `cancel_claim` withdraws one (WAIVER +
+  executionType CANCEL + relatedTransactionId). Several claims sharing one drop = only one can win.
 - Speed matters on Vercel (120 s limit, clients may time out sooner): avoid `statistics.mean` in hot loops;
   `find_trades` has a time budget and reports coverage.
 - Outside data must never break a tool: fetchers return None on failure and tools say what was missing.

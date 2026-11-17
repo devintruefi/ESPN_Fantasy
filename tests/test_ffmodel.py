@@ -138,3 +138,20 @@ def test_current_week_assumes_best_lineup_before_kickoff(football_hub):
     for tid, (so_far, proj) in world.live.items():
         if so_far == 0:
             assert proj >= world.lineup_total(world.team(tid), view.scoring_period) - 1e-9
+
+
+def test_empty_slots_are_filled_by_a_free_agent(football_hub):
+    """A team with no D/ST is assumed to pick one up; pricing a pickup still sees the hole."""
+    h = football_hub._handles[0]
+    view = football_hub.view(h)
+    world = football_hub.football_world(h, view)
+    week = view.scoring_period
+    tid = next(iter(view.teams))
+    no_dst = [p for p in world.team(tid) if p["pos"] != "D/ST"]
+    fa_dst = max((world.wv(world.players[i], week) for i in world.free_agents
+                  if world.players[i]["pos"] == "D/ST" and world.players[i]["status"] not in ("OUT", "INJURY_RESERVE")),
+                 default=0.0)
+    filled = world.lineup_total(no_dst, week)
+    empty = world.lineup_total(no_dst, week, fill=False)
+    assert abs((filled - empty) - fa_dst) < 1e-6
+    assert any("(free agent)" in n for s, n, v in world.lineup(no_dst, week)) == (fa_dst > 0)

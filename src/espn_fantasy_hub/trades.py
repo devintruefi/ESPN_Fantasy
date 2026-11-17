@@ -299,12 +299,19 @@ class _Scorer:
             rows.insert(i, (v, p["id"], p["slots"]))
         used: set = set()
         total = 0.0
+        fill = None
         for sid in self.slots:
-            for v, pid, sl in rows:
-                if sid in sl and pid not in used:
-                    used.add(pid)
-                    total += v
-                    break
+            pick = next(((v, pid) for v, pid, sl in rows if sid in sl and pid not in used), None)
+            if pick is None or pick[0] <= 0:   # empty slot: the team picks up a free agent
+                fill = fill or self.world.hole_filler(w, mode)
+                fv = fill(sid)[0]
+                if fv > (pick[0] if pick else 0.0):
+                    total += fv
+                    continue
+            if pick is None:
+                continue
+            used.add(pick[1])
+            total += pick[0]
         if starters is not None:
             starters |= used
         return total

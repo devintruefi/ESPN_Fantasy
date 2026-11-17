@@ -147,8 +147,12 @@ def week_value(view: LeagueView, pl: dict, week: int, mode: str = "proj", injury
     return point_value(pl, week, mode) * availability(view, pl, week, injury)
 
 
-def best_lineup(view: LeagueView, players: list[dict], week: int, value=None) -> tuple[float, list[tuple[str, str, float]]]:
-    """Expected points of the best legal lineup in `week` (greedy, most specific slot first)."""
+def best_lineup(view: LeagueView, players: list[dict], week: int, value=None,
+                fill=None) -> tuple[float, list[tuple[str, str, float]]]:
+    """Expected points of the best legal lineup in `week` (greedy, most specific slot first).
+
+    ``fill(slot_id)`` -> (points, label): who fills a slot the roster leaves empty (nobody
+    eligible, or only players on bye / ruled out). Teams pick someone up before the week starts."""
     slots = sorted(
         ((sid, n) for sid, n in view.slot_counts.items() if view.sport.is_starting_slot(sid)),
         key=lambda x: (SLOT_SPECIFICITY.get(x[0], 3), x[0]),
@@ -160,6 +164,12 @@ def best_lineup(view: LeagueView, players: list[dict], week: int, value=None) ->
     for sid, n in slots:
         for _ in range(n):
             pick = next(((v, p) for v, p in vals if p["id"] not in used and sid in p["slots"]), None)
+            if fill is not None and (pick is None or pick[0] <= 0):
+                fv, label = fill(sid)
+                if fv > (pick[0] if pick else 0.0):
+                    total += fv
+                    lineup.append((view.sport.slot(sid), label, round(fv, 1)))
+                    continue
             if pick is None:
                 continue
             used.add(pick[1]["id"])
@@ -267,7 +277,8 @@ class FootballWorld:
         self.live = _live(view, live_raw)
         # Before any game of the week has started, ESPN's projection follows each team's lineup as
         # currently set, so an OUT/DOUBTFUL starter with a healthy backup on the bench understates
-        # that team. Assume every team will start its best healthy lineup until games begin.
+        # that team. Assume every team will start its best healthy lineup until games begin, and
+        # fill any empty slot (no D/ST this week, etc.) with the best free agent for it.
         if not view.season_over:
             for tid, (so_far, proj) in list(self.live.items()):
                 if so_far == 0:
@@ -309,11 +320,35 @@ class FootballWorld:
             v = self._wv[key] = week_value(self.view, p, week, mode, injury)
         return v
 
-    def lineup_total(self, plist: list[dict], week: int, mode: str = "proj", injury: str = "espn") -> float:
-        return best_lineup(self.view, plist, week, value=lambda p: self.wv(p, week, mode, injury))[0]
+    def hole_filler(self, week: int, mode: str = "proj", injury: str = "espn"):
+        """Who fills an empty starting slot: the best healthy free agent for that slot that week.
+        A team with no D/ST (or anyone else) for a week is assumed to pick one up first."""
+        cache = self.__dict__.setdefault("_fills", {})
+
+        def fill(sid):
+            key = (sid, week, mode, injury)
+            if key not in cache:
+                best, label = 0.0, ""
+                for pid in self.free_agents:
+                    p = self.players[pid]
+                    if sid not in p["slots"] or p["status"] in ("OUT", "INJURY_RESERVE", "SUSPENSION"):
+                        continue
+                    v = self.wv(p, week, mode, injury)
+                    if v > best:
+                        best, label = v, f"{p['name']} (free agent)"
+                cache[key] = (best, label)
+            return cache[key]
+        return fill
+
+    def lineup_total(self, plist: list[dict], week: int, mode: str = "proj", injury: str = "espn",
+                     fill: bool = True) -> float:
+        """Best lineup points; ``fill=False`` leaves empty slots empty (to price a pickup that fills one)."""
+        return best_lineup(self.view, plist, week, value=lambda p: self.wv(p, week, mode, injury),
+                           fill=self.hole_filler(week, mode, injury) if fill else None)[0]
 
     def lineup(self, plist: list[dict], week: int, mode: str = "proj") -> list[tuple[str, str, float]]:
-        return best_lineup(self.view, plist, week, value=lambda p: self.wv(p, week, mode))[1]
+        return best_lineup(self.view, plist, week, value=lambda p: self.wv(p, week, mode),
+                           fill=self.hole_filler(week, mode))[1]
 
     def strength(self, plist: list[dict], mode: str = "proj", injury: str = "espn") -> dict[int, float]:
         return {w: self.lineup_total(plist, w, mode, injury) + self.bias for w in self.weeks_all}
@@ -321,10 +356,10 @@ class FootballWorld:
     def strengths(self, rosters: dict[int, list[dict]], mode: str = "proj", injury: str = "espn") -> dict[int, dict[int, float]]:
         return {tid: self.strength(pl, mode, injury) for tid, pl in rosters.items()}
 
-    def lineup_score(self, plist: list[dict], mode: str = "proj") -> float:
+    def lineup_score(self, plist: list[dict], mode: str = "proj", fill: bool = True) -> float:
         """Points a week of starting lineup: 60% regular season left, 40% playoff weeks."""
-        reg = sum(self.lineup_total(plist, w, mode) for w in self.reg_weeks) / len(self.reg_weeks) if self.reg_weeks else 0.0
-        po = sum(self.lineup_total(plist, w, mode) for w in self.po_weeks) / len(self.po_weeks) if self.po_weeks else 0.0
+        reg = sum(self.lineup_total(plist, w, mode, fill=fill) for w in self.reg_weeks) / len(self.reg_weeks) if self.reg_weeks else 0.0
+        po = sum(self.lineup_total(plist, w, mode, fill=fill) for w in self.po_weeks) / len(self.po_weeks) if self.po_weeks else 0.0
         if not self.reg_weeks:
             return po
         return 0.6 * reg + 0.4 * po if self.po_weeks else reg
@@ -519,8 +554,8 @@ def season_outlook(view: LeagueView, live_raw: dict | None, past_raws: list[dict
                                 "share_of_seasons_pct": pct(n / sims)})
 
     # best free-agent adds by lineup gain (no drop assumed; pick the drop from the bench)
-    def lineup_avg(plist, weeks):
-        return st.mean(world.lineup_total(plist, w) for w in weeks) if weeks else 0.0
+    def lineup_avg(plist, weeks):   # no hole-filling: this prices the pickups that fill your holes
+        return st.mean(world.lineup_total(plist, w, fill=False) for w in weeks) if weeks else 0.0
 
     base_reg, base_po = lineup_avg(mine, world.reg_weeks), lineup_avg(mine, world.po_weeks)
     w_reg = 0.4 if tally[team_id]["playoffs"] > 0.95 else 0.7   # a near-lock plays for the playoffs
