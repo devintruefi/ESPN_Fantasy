@@ -34,13 +34,29 @@ async def _send_json(send, status: int, data: dict) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
+def _header_token(value: str) -> str:
+    """The token from an Authorization header value, forgiving common paste mistakes when
+    a token is saved somewhere that adds the header itself: a doubled "Bearer", quotes,
+    a NAME= prefix, or the whole connector URL. The exact token is still required."""
+    v = value.strip()
+    while v.lower().startswith("bearer "):
+        v = v[7:].strip()
+    v = v.strip("\"'").strip()
+    if v.upper().startswith("MCP_ACCESS_TOKEN="):
+        v = v.split("=", 1)[1].strip().strip("\"'")
+    m = TOKEN_IN_PATH.search(v.split("?", 1)[0])
+    return m.group(1) if m else v
+
+
 def _presented_token(scope) -> str | None:
     m = TOKEN_IN_PATH.search(scope.get("path") or "")
     if m:
         return m.group(1)
     for name, value in scope.get("headers") or []:
-        if name.lower() == b"authorization" and value.lower().startswith(b"bearer "):
-            return value[7:].decode().strip()
+        if name.lower() == b"authorization":
+            token = _header_token(value.decode("latin-1"))
+            if token:
+                return token
     qs = parse_qs((scope.get("query_string") or b"").decode())
     return (qs.get("key") or [None])[0]
 

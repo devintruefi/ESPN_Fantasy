@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from espn_fantasy_hub.remote import create_app
 
@@ -95,3 +96,21 @@ def test_bad_requests_are_handled(football_hub):
     assert asyncio.run(raw("{not json")).status_code in (400, 422)
     r = asyncio.run(raw(json.dumps(rpc("nope/nope"))))
     assert "error" in r.json()
+
+
+@pytest.mark.parametrize("value", [
+    "Bearer {t}", "bearer {t}", "Bearer Bearer {t}", "Bearer  {t} ", 'Bearer "{t}"',
+    "Bearer https://example.vercel.app/mcp/{t}", "Bearer MCP_ACCESS_TOKEN={t}", "{t}",
+])
+def test_bearer_header_forgives_paste_formats(football_hub, value):
+    app = create_app(TOKEN, football_hub)
+    r = call(app, "/mcp", rpc("tools/list", {}, 1), HEADERS | {"authorization": value.format(t=TOKEN)})
+    assert r.status_code == 200, value
+
+
+@pytest.mark.parametrize("value", ["Bearer ", "Bearer Bearer", "Bearer x{t}", "Bearer {t}x",
+                                   "Bearer https://example.vercel.app/mcp/wrong-token-0123456789"])
+def test_bearer_header_still_needs_the_exact_token(football_hub, value):
+    app = create_app(TOKEN, football_hub)
+    r = call(app, "/mcp", rpc("tools/list", {}, 1), HEADERS | {"authorization": value.format(t=TOKEN)})
+    assert r.status_code == 404, value
