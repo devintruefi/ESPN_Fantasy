@@ -261,9 +261,14 @@ class Hub:
             card["lineup_alerts"] = [f"[{i['level']}] {i['problem']}" for i in alerts] or ["none"]
         return card
 
-    def league_settings(self, league=None) -> dict:
+    def league_settings(self, league=None, raw: bool = False) -> dict:
         h = self.resolve(league)
-        return self.view(h).settings_view()
+        view = self.view(h)
+        out = view.settings_view()
+        if raw:   # every setting exactly as ESPN sends it (no secrets in league settings)
+            out["raw_settings"] = view.settings
+            out["raw_status"] = view.core.get("status")
+        return out
 
     def standings(self, league=None) -> dict:
         h = self.resolve(league)

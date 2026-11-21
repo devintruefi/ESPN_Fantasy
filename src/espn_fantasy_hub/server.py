@@ -166,10 +166,13 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         return run(lambda h: h.my_leagues())
 
     @mcp.tool(annotations=READ_ONLY)
-    def league_settings(league: LeagueArg = None) -> str:
+    def league_settings(
+        league: LeagueArg = None,
+        raw: Annotated[bool, Field(description="Also return every setting exactly as ESPN sends it.")] = False,
+    ) -> str:
         """League rules: scoring format (points rules or categories), roster slots,
         playoff format, waiver/FAAB rules, trade deadline, draft, current week."""
-        return run(lambda h: h.league_settings(league))
+        return run(lambda h: h.league_settings(league, raw))
 
     @mcp.tool(annotations=READ_ONLY)
     def standings(league: LeagueArg = None) -> str:
