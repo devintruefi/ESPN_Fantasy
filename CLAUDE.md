@@ -32,8 +32,9 @@ MCP server for ESPN fantasy football + basketball. Python 3.10+, built on
   bye, injury) is assumed to pick up the best free agent for it before the week starts, and every team
   starts its best healthy lineup. `FootballWorld.lineup_total` does this by default; pass `fill=False`
   only when pricing the user's own pickup against the real hole (waiver advice, best adds).
-- Basketball pickups (user's standing rule): a player added after that day's first game has started can't
-  play until the next day. Plan adds the day before (or before the first tip); `streaming_options` does this.
+- Basketball pickups (user's standing rule): a move made after that day's first game has started takes
+  effect the next day for both sides: the player added can't play until tomorrow, and the player dropped
+  still plays today. So make tomorrow's add any time today. `streaming_options` models this.
 - Waiver claims: `pending_claims` lists the queue with ids; `cancel_claim` withdraws one (WAIVER +
   executionType CANCEL + relatedTransactionId). Several claims sharing one drop = only one can win.
 - Speed matters on Vercel (120 s limit, clients may time out sooner): avoid `statistics.mean` in hot loops;
