@@ -179,6 +179,12 @@ class ProSchedule:
                         self.period_date[period] = start.date()
             self.by_team[tid] = periods
 
+    def first_start(self, period) -> dt.datetime | None:
+        """When the first game of a scoring period (a basketball day) tips off."""
+        starts = [ms_to_dt(g.get("date"), self.tz) for periods in self.by_team.values() for g in periods.get(period) or []]
+        starts = [x for x in starts if x]
+        return min(starts) if starts else None
+
     def game(self, pro_team_id, period) -> dict | None:
         games = self.by_team.get(pro_team_id, {}).get(period) or []
         if not games:

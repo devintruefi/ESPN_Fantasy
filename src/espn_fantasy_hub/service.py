@@ -1126,7 +1126,10 @@ class Hub:
         raw = h.client.scoreboard(view.current_matchup_period, view.scoring_period)
         pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
         today = view.scoring_period
-        start = today + int(day)
+        # A pickup made after the day's first game has tipped can't play until the next day.
+        first_tip = view.pro.first_start(today)
+        earliest = today + 1 if first_tip and view.pro.now >= first_tip else today
+        start = max(today + int(day), earliest)
         last_day = max(view.pro.periods_between(view.pro.today, end_of_week(view.pro.today)) or [today])
         if start > last_day:
             raise UserError("This matchup ends before that day.")
@@ -1156,12 +1159,12 @@ class Hub:
             return catseason.matchup_odds(view, m, raw, me, wraps, win)
 
         notes = []
-        if prior_add:
+        if prior_add:   # made today: plays from the first day a pickup is active
             pw = in_pool(prior_add)
             roster.append(pw)
-            windows[player_of(pw)["id"]] = (today, BIG)
-        if prior_drop:
-            windows[player_of(on_roster(prior_drop))["id"]] = (BIG, -BIG)
+            windows[player_of(pw)["id"]] = (earliest, BIG)
+        if prior_drop:  # dropped with it, after his games today
+            windows[player_of(on_roster(prior_drop))["id"]] = (-BIG, earliest - 1) if earliest > today else (BIG, -BIG)
         base = odds(roster, windows)
         if base is None:
             raise UserError("No matchup this period.")
@@ -1193,8 +1196,8 @@ class Hub:
             status = ppe_of(w).get("status")
             if not free(w) or any(player_of(r)["id"] == pl["id"] for r in roster):
                 continue
-            if view._injury(w, pl) in OUT_STATUSES or (status == "WAIVERS" and start == today):
-                continue
+            if view._injury(w, pl) in OUT_STATUSES or status == "WAIVERS":
+                continue   # a waiver claim doesn't land in time to matter this week
             games = [d for d in range(start, last_day + 1)
                      if (g := view.pro.game(pl.get("proTeamId"), d)) and (g["start"] is None or g["start"] > view.pro.now)]
             if not games:
@@ -1217,9 +1220,18 @@ class Hub:
                 "season_value": rnd(season_value(view, w), 2),
             }))
         rows.sort(key=lambda r: -r["win_pct"])
+        tip = view.pro.first_start(start)
+        if start > today and earliest > today and start == earliest:
+            when = "any time today (games have started, so he plays from tomorrow); drop after your player's game today"
+        elif start > today:
+            when = f"tomorrow before the first tip ({fmt_time(tip) if tip else 'first game'}), or today if today's add is unused"
+        else:
+            when = f"now, before the first tip today ({fmt_time(first_tip) if first_tip else 'first game'})"
+        notes.insert(0, "Pickups made after a day's first game has started can't play until the next day.")
         return self._header(h, view) | compact({
             "team": view.team_label(me),
-            "pickup_day": str(view.pro.period_date.get(start)),
+            "pickup_plays_from": str(view.pro.period_date.get(start)),
+            "make_the_move": when,
             "drop": player_of(drop_w).get("fullName"),
             "prior_move": (f"add {prior_add}" if prior_add else "") + (f", drop {prior_drop}" if prior_drop else "") or None,
             "win_pct_now": rnd(100 * base["win"], 1),

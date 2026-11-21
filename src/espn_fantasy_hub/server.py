@@ -55,6 +55,9 @@ GM PRINCIPLES (follow these in every recommendation):
    odds already do this; don't count an opponent's hole as free points. For the user,
    still recommend the pickup that fills the hole (and price it against the hole).
    Likewise assume every team starts its best healthy lineup.
+8. Basketball pickups: a player added after that day's first game has tipped can't play
+   until the next day. To stream for a day, add the player the day before (or before the
+   first tip), and drop someone after his games are done. `streaming_options` models this.
 
 WORKFLOWS:
 - Lineups (football weekly, basketball daily): `lineup_check` (exact swaps, bench

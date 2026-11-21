@@ -219,3 +219,23 @@ def test_streaming_options_rank_pickups_for_this_matchup(basketball_data):
     for r in tom["best_pickups"]:
         if r["add"] in top_today:
             assert r["games_this_matchup"] <= top_today[r["add"]]
+
+
+def test_streaming_pickup_after_first_tip_plays_tomorrow(basketball_data):
+    core = basketball_data["core"]
+    core["status"]["currentMatchupPeriod"] = 10
+    for m in core["schedule"]:
+        if m["matchupPeriodId"] >= 10:
+            m["winner"] = "UNDECIDED"
+    for m in basketball_data["scoreboard_10"]["schedule"]:
+        m["winner"] = "UNDECIDED"
+    day = dt.date(2023, 1, 10)
+    hub, period = _in_season_hub(basketball_data, day)
+    early = hub.streaming_options(day=0)
+    assert early["pickup_plays_from"] == str(day)          # noon ET: before the first tip
+    pro = ProSchedule(basketball_data["pro_schedule"], BASKETBALL_SPORT, dt.timezone.utc)
+    late_now = pro.first_start(period) + dt.timedelta(minutes=30)
+    cfg = LeagueConfig(sport="basketball", league_id=1631984064, season=2023, team_id=1)
+    late_hub = make_hub([(cfg, basketball_data)], late_now)
+    late = late_hub.streaming_options(day=0)
+    assert late["pickup_plays_from"] == str(day + dt.timedelta(days=1))   # games started: next day
