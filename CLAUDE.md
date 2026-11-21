@@ -35,6 +35,11 @@ MCP server for ESPN fantasy football + basketball. Python 3.10+, built on
 - Basketball pickups (user's standing rule): a move made after that day's first game has started takes
   effect the next day for both sides: the player added can't play until tomorrow, and the player dropped
   still plays today. So make tomorrow's add any time today. `streaming_options` models this.
+- Read the raw settings (`league_settings raw=true`) before planning moves. Roster `positionLimits` are
+  enforced by ESPN (the basketball league allows at most 4 centers; `add_player`/`streaming_options` check it).
+  `matchupAcquisitionLimit` + `matchupLimitPerScoringPeriod` read like "1 add per day" but that league allows
+  several a day (confirmed by the user and its history): don't treat it as a rule. `rosterLocktimeType`
+  FIRSTGAME_SCORINGPERIOD is why late moves take effect the next day.
 - Waiver claims: `pending_claims` lists the queue with ids; `cancel_claim` withdraws one (WAIVER +
   executionType CANCEL + relatedTransactionId). Several claims sharing one drop = only one can win.
 - Speed matters on Vercel (120 s limit, clients may time out sooner): avoid `statistics.mean` in hot loops;
