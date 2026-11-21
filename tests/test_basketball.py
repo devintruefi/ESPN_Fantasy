@@ -289,3 +289,34 @@ def test_future_lineup_uses_future_roster_type():
     from espn_fantasy_hub import writes
     assert writes.lineup_payload(1, "{S}", 40, [(1, 12, 0)], future=True)["type"] == "FUTURE_ROSTER"
     assert writes.lineup_payload(1, "{S}", 40, [(1, 12, 0)])["type"] == "ROSTER"
+
+
+def test_auto_lineup_crowded_day_keeps_the_best(basketball_data):
+    from espn_fantasy_hub import writes
+    day = dt.date(2023, 1, 10)
+    hub, period = _in_season_hub(basketball_data, day)
+    view = hub.view(hub.handles()[0])
+    entries = view.roster_entries(view.my_team_id)
+    # pretend everyone has a game today: more players than slots
+    for e in entries:
+        tid = player_of(e).get("proTeamId")
+        if not view.pro.game(tid, period):
+            view.pro.by_team.setdefault(tid, {})[period] = [{"date": None, "homeProTeamId": tid, "awayProTeamId": 0}]
+    vals = {player_of(e)["id"]: i for i, e in enumerate(entries)}
+    try:
+        plan, _, warnings = writes.auto_lineup(view, entries, period, lambda w: vals[player_of(w)["id"]])
+    except writes.MoveError:
+        plan, warnings = [], []
+    slot = {player_of(e)["id"]: e["lineupSlotId"] for e in entries}
+    for pid, frm, to in plan:
+        slot[pid] = to
+    sport = view.sport
+    healthy = [e for e in entries if e["lineupSlotId"] != sport.ir_slot
+               and view._injury(e, player_of(e)) not in ("OUT", "INJURY_RESERVE", "SUSPENSION")]
+    started = {pid for pid, s in slot.items() if sport.is_starting_slot(s)}
+    sitting = [e for e in healthy if player_of(e)["id"] not in started]
+    for e in sitting:   # nobody sitting could replace a lower-value starter in a slot he's eligible for
+        for s in healthy:
+            sp = player_of(s)["id"]
+            if sp in started and vals[sp] < vals[player_of(e)["id"]]:
+                assert slot[sp] not in player_of(e)["eligibleSlots"], (player_of(e)["fullName"], player_of(s)["fullName"])

@@ -295,9 +295,10 @@ def auto_lineup(view: LeagueView, entries: list[dict], period: int, value, futur
                 owner[i] = pid
     fixed = set(owner)
 
-    def eligible(pid):
+    def eligible(pid):   # his current slot first, so nobody is shuffled without a reason
         el = set(player_of(by_id[pid]).get("eligibleSlots") or [])
-        return [k for k, s in enumerate(slots) if s in el and k not in fixed]
+        ks = [k for k, s in enumerate(slots) if s in el and k not in fixed]
+        return sorted(ks, key=lambda k: slots[k] != original[pid])
 
     def augment(pid, seen):
         for k in eligible(pid):
@@ -311,15 +312,37 @@ def auto_lineup(view: LeagueView, entries: list[dict], period: int, value, futur
 
     playing = sorted((pid for pid, e in by_id.items() if pid not in locked and plays(e)),
                      key=lambda pid: value(by_id[pid]) or -99, reverse=True)
+    # Players already starting keep their own slot when it's free; the rest fit around them.
     for pid in playing:
-        augment(pid, set())
+        if sport.is_starting_slot(original[pid]):
+            k = next((k for k in eligible(pid) if slots[k] == original[pid] and k not in owner), None)
+            if k is not None:
+                owner[k] = pid
+    for pid in playing:
+        if pid not in owner.values():
+            augment(pid, set())
+    # Crowded day: a better player who didn't fit replaces the weakest starter he can.
+    val = {pid: value(by_id[pid]) or -99 for pid in playing}
+    for pid in playing:
+        if pid in owner.values():
+            continue
+        for weak in sorted((q for q in owner.values() if q in val and q not in locked), key=lambda q: val[q]):
+            if val[weak] >= val[pid]:
+                break
+            saved = dict(owner)
+            k = next(k for k, q in owner.items() if q == weak)
+            del owner[k]
+            if augment(pid, set()):
+                break
+            owner.clear()
+            owner.update(saved)
     assigned = {pid: slots[k] for k, pid in owner.items()}
     # Fill leftover slots with players already there (no game either way), else leave empty.
     for k, s in enumerate(slots):
         if k in owner:
             continue
         keep = next((pid for pid, sid in original.items() if sid == s and pid not in assigned and pid not in locked
-                     and s in (player_of(by_id[pid]).get("eligibleSlots") or [])), None)
+                     and pid not in playing and s in (player_of(by_id[pid]).get("eligibleSlots") or [])), None)
         if keep is not None:
             assigned[keep] = s
             owner[k] = keep
