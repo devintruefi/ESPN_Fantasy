@@ -1162,6 +1162,26 @@ class Hub:
             return catseason.matchup_odds(view, m, raw, me, wraps, win, split)
 
         notes = []
+        # Moves already made today that take effect tomorrow: tomorrow's roster has the pickup,
+        # today's still has the player dropped.
+        if today + 1 <= last_day:
+            try:
+                tomorrow = view.roster_entries(me, h.client.roster_for_period(today + 1))
+            except EspnError:
+                tomorrow = []
+            ids_today = {player_of(e)["id"] for e in roster}
+            ids_tom = {player_of(e)["id"] for e in tomorrow}
+            for e in tomorrow:
+                if player_of(e)["id"] not in ids_today:
+                    roster.append(e)
+                    windows[player_of(e)["id"]] = (today + 1, BIG)
+                    notes.append(f"Counts {player_of(e).get('fullName')} from tomorrow (already added).")
+            if ids_tom:
+                for e in list(roster):
+                    pid = player_of(e)["id"]
+                    if pid in ids_today and pid not in ids_tom:
+                        windows[pid] = (-BIG, today)
+                        notes.append(f"Counts {player_of(e).get('fullName')} through today (already dropped).")
         if prior_add:   # made today: plays from the first day a pickup is active
             pw = in_pool(prior_add)
             roster.append(pw)
