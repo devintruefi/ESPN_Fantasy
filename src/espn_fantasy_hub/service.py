@@ -1219,10 +1219,16 @@ class Hub:
         next_mon = end_of_week(view.pro.today) + dt.timedelta(days=1)
         next_days = view.pro.periods_between(next_mon, next_mon + dt.timedelta(days=6))
         rows = []
+        gone = {k for k, v in cand_windows.items() if v[1] < last_day}   # dropped before the week ends
+        keep = [player_of(r) for r in roster if player_of(r)["id"] not in gone]
+        blocked = []
         for w in pool:
             pl = player_of(w)
             status = ppe_of(w).get("status")
             if not free(w) or any(player_of(r)["id"] == pl["id"] for r in roster):
+                continue
+            if view.over_position_limit(keep + [pl]):
+                blocked.append(pl.get("fullName"))
                 continue
             if view._injury(w, pl) in OUT_STATUSES or status == "WAIVERS":
                 continue   # a waiver claim doesn't land in time to matter this week
@@ -1248,6 +1254,12 @@ class Hub:
                 "season_value": rnd(season_value(view, w), 2),
             }))
         rows.sort(key=lambda r: -r["win_pct"])
+        if blocked:
+            lim = view.position_limits()
+            notes.append("Left out (roster position limit " + ", ".join(
+                f"{h.sport.position({'defaultPositionId': k})} max {v}" for k, v in lim.items())
+                + f", drop {player_of(drop_w).get('fullName')} doesn't free one): " + ", ".join(blocked[:8])
+                + ("…" if len(blocked) > 8 else ""))
         tip = view.pro.first_start(start)
         if start > today and earliest > today and start == earliest:
             when = "any time today (games have started, so he plays from tomorrow); drop after your player's game today"
@@ -1272,7 +1284,7 @@ class Hub:
                 f"started ({'last-15-day' if recent else 'season'} averages for every player on both teams, best players "
                 "each day up to your starting slots; positions ignored). It doesn't know about minutes a pickup takes "
                 "from your own players on the same NBA team, or about matchups: check those.",
-                "Daily pickup limits apply: one pickup today and one tomorrow at most in leagues with a 1-per-day limit.",
+                "Roster position limits (e.g. most centers allowed) are respected; pickup limits are not checked.",
             ],
         })
 
@@ -1483,6 +1495,10 @@ class Hub:
                 raise UserError(str(e)) from None
             if ppe_of(drop_w).get("lineupLocked"):
                 raise UserError(f"{player_of(drop_w).get('fullName')} is locked (game started) and can't be dropped right now.")
+        after = [player_of(e) for e in my_entries if not drop_w or player_of(e).get("id") != player_of(drop_w).get("id")]
+        problem = view.over_position_limit(after + [pick])
+        if problem:
+            raise UserError(f"ESPN won't allow adding {pick.get('fullName')}: {problem} Drop a player at that position instead.")
         active = [e for e in my_entries if e.get("lineupSlotId") != h.sport.ir_slot]
         warnings = []
         if len(active) >= writes.roster_limit(view) and not drop_w:

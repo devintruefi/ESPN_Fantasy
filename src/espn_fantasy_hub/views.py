@@ -438,6 +438,33 @@ class LeagueView:
             out["roster"]["lineup_lock"] = lock
         return compact(out)
 
+    def position_limits(self) -> dict[int, int]:
+        """{default position id: most allowed on a roster} (e.g. at most 4 centers)."""
+        pl = (self.settings.get("rosterSettings") or {}).get("positionLimits") or {}
+        out = {}
+        for k, v in pl.items():
+            try:
+                if v is not None and int(v) > 0:
+                    out[int(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def over_position_limit(self, players: list[dict]) -> str | None:
+        """Why a roster of these players (player dicts) breaks a position limit, or None."""
+        lim = self.position_limits()
+        if not lim:
+            return None
+        counts: dict[int, int] = {}
+        for p in players:
+            pid = p.get("defaultPositionId")
+            counts[pid] = counts.get(pid, 0) + 1
+        for pos, cap in lim.items():
+            if counts.get(pos, 0) > cap:
+                name = self.sport.default_positions.get(pos, str(pos))
+                return f"That would be {counts[pos]} {name}s; this league allows at most {cap}."
+        return None
+
     def add_limit(self) -> tuple[int | None, str]:
         """(limit, 'day'|'matchup') for pickups, or (None, '') when unlimited."""
         acq = self.settings.get("acquisitionSettings") or {}
@@ -448,7 +475,9 @@ class LeagueView:
 
     def _add_limit_text(self) -> str | None:
         limit, per = self.add_limit()
-        return f"{limit} pickup(s) per {per}" if limit else None
+        # ESPN sends this even in leagues that don't enforce it (one league allowed several adds a day
+        # with "1 per scoring period" set), so say where it comes from rather than state it as a rule.
+        return f"ESPN setting says {limit} per {per}; check it in the app (not always enforced)" if limit else None
 
     def adds_status(self, team_id) -> dict | None:
         """Pickups used this matchup vs the league limit."""

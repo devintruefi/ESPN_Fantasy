@@ -135,7 +135,7 @@ def test_tomorrow_wording_and_limits(basketball_data):
     assert any("tomorrow" in i["problem"] for i in out["issues"] if "no game" in i["problem"]) or not any(
         "no game" in i["problem"] for i in out["issues"])
     s = hub.league_settings()
-    assert s["waivers_and_free_agents"]["add_limit"] == "1 pickup(s) per day"
+    assert s["waivers_and_free_agents"]["add_limit"].startswith("ESPN setting says 1 per day")
     assert out["pickups"]["limit"] == "1 per day"
 
 
@@ -320,3 +320,12 @@ def test_auto_lineup_crowded_day_keeps_the_best(basketball_data):
             sp = player_of(s)["id"]
             if sp in started and vals[sp] < vals[player_of(e)["id"]]:
                 assert slot[sp] not in player_of(e)["eligibleSlots"], (player_of(e)["fullName"], player_of(s)["fullName"])
+
+
+def test_position_limit_blocks_extra_center(basketball_hub):
+    view = basketball_hub.view(basketball_hub.handles()[0])
+    view.settings.setdefault("rosterSettings", {})["positionLimits"] = {"5": 2, "1": -1, "0": 0}
+    assert view.position_limits() == {5: 2}
+    two_c = [{"defaultPositionId": 5}, {"defaultPositionId": 5}, {"defaultPositionId": 1}]
+    assert view.over_position_limit(two_c) is None
+    assert "at most 2" in view.over_position_limit(two_c + [{"defaultPositionId": 5}])
