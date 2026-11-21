@@ -192,3 +192,30 @@ def test_matchup_projection_points_variant(basketball_data):
     pts = out["points"]
     assert pts["you_projected"] >= pts["you_now"]
     assert out["projected_result"]
+
+
+def test_streaming_options_rank_pickups_for_this_matchup(basketball_data):
+    core = basketball_data["core"]
+    core["status"]["currentMatchupPeriod"] = 10
+    for m in core["schedule"]:
+        if m["matchupPeriodId"] >= 10:
+            m["winner"] = "UNDECIDED"
+    for m in basketball_data["scoreboard_10"]["schedule"]:
+        m["winner"] = "UNDECIDED"
+    hub, period = _in_season_hub(basketball_data, dt.date(2023, 1, 10))
+    out = hub.streaming_options(day=0)
+    assert 0 <= out["win_pct_now"] <= 100
+    assert out["drop"]
+    rows = out["best_pickups"]
+    assert rows, out
+    assert rows == sorted(rows, key=lambda r: -r["win_pct"])
+    for r in rows:
+        assert r["games_this_matchup"] >= 1 and 0 <= r["win_pct"] <= 100
+    # a pickup can only add games, so the best one never does worse than just dropping
+    assert rows[0]["win_pct"] >= out["win_pct_after_drop_only"] - 1e-6
+    # tomorrow's pickup counts fewer (or equal) games than today's
+    tom = hub.streaming_options(day=1, drop=out["drop"])
+    top_today = {r["add"]: r["games_this_matchup"] for r in rows}
+    for r in tom["best_pickups"]:
+        if r["add"] in top_today:
+            assert r["games_this_matchup"] <= top_today[r["add"]]

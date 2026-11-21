@@ -282,11 +282,46 @@ def rank_results(results: list[dict], top: int) -> list[dict]:
 
 
 # ---- the current matchup, from live category totals ---------------------------------------
+def _side_projection(view: LeagueView, m: CategoryModel, side: dict, wraps: list[dict],
+                     windows: dict | None = None) -> tuple[dict, dict, int]:
+    """Projected end-of-matchup category values and their variance for one side."""
+    from .strategy import RAW, _cat_values, _period_raw, _remaining_production
+
+    tid = side["teamId"]
+    add, n_games, _ = _remaining_production(view, wraps, windows)
+    cur, tot = _cat_values(side), _period_raw(side)
+    act = [p for p in m.players if p["owner"] == tid and p["injury"] not in OUT_STATUSES] or m.players
+    pv, vv = {}, {}
+    for c in view.categories:
+        name = c["name"]
+        per_game_var = st.mean(p["var"][name] for p in act) if name in m.cats else 0.0
+        if name in RATIO_PARTS:
+            mk, at = RATIO_PARTS[name]
+            cur_att = tot.get(RAW[at], 0.0)
+            a_m, a_a = add.get(mk, 0.0), add.get(at, 0.0)
+            r = cur.get(str(c["id"]))
+            pv[name] = ((r or 0.0) * cur_att + a_m) / (cur_att + a_a) if cur_att + a_a > 0 else (r or 0.0)
+            vv[name] = n_games * per_game_var / max(cur_att + a_a, 1.0) ** 2
+        else:
+            pv[name] = (cur.get(str(c["id"])) or 0.0) + add.get(name, 0.0)
+            vv[name] = n_games * per_game_var
+    return pv, vv, n_games
+
+
+def _pair_odds(view: LeagueView, m: CategoryModel, a: tuple, b: tuple) -> tuple[float, dict[str, float]]:
+    """P(side a wins the matchup) and P(a wins each category), from two side projections."""
+    q = {}
+    for c in m.cats:
+        diff = m.sign[c] * (a[0].get(c, 0.0) - b[0].get(c, 0.0))
+        v = a[1].get(c, 0.0) + b[1].get(c, 0.0)
+        q[c] = _phi(diff / math.sqrt(v) / LAMBDA) if v > 1e-9 else (0.5 if abs(diff) < 1e-9 else float(diff > 0))
+    win = p_majority(q.values()) if view.scoring_type == "H2H_MOST_CATEGORIES" else st.mean(q.values())
+    return win, q
+
+
 def live_probs(view: LeagueView, m: CategoryModel, raw: dict) -> dict[tuple[int, int], float]:
     """{(home, away): P(home wins)} for this matchup period: categories so far plus the
     expected production of games not yet started (same method as matchup_projection)."""
-    from .strategy import RAW, _cat_values, _period_raw, _remaining_production
-
     out = {}
     for g in (raw or {}).get("schedule") or []:
         if g.get("matchupPeriodId") != view.current_matchup_period:
@@ -294,36 +329,25 @@ def live_probs(view: LeagueView, m: CategoryModel, raw: dict) -> dict[tuple[int,
         sides = [g.get("home") or {}, g.get("away") or {}]
         if not all(s.get("teamId") for s in sides):
             continue
-        proj, var = [], []
-        for side in sides:
-            tid = side["teamId"]
-            add, n_games, _ = _remaining_production(view, view.roster_entries(tid))
-            cur, tot = _cat_values(side), _period_raw(side)
-            act = [p for p in m.players if p["owner"] == tid and p["injury"] not in OUT_STATUSES] or m.players
-            pv, vv = {}, {}
-            for c in view.categories:
-                name = c["name"]
-                per_game_var = st.mean(p["var"][name] for p in act) if name in m.cats else 0.0
-                if name in RATIO_PARTS:
-                    mk, at = RATIO_PARTS[name]
-                    cur_att = tot.get(RAW[at], 0.0)
-                    a_m, a_a = add.get(mk, 0.0), add.get(at, 0.0)
-                    r = cur.get(str(c["id"]))
-                    pv[name] = ((r or 0.0) * cur_att + a_m) / (cur_att + a_a) if cur_att + a_a > 0 else (r or 0.0)
-                    vv[name] = n_games * per_game_var / max(cur_att + a_a, 1.0) ** 2
-                else:
-                    pv[name] = (cur.get(str(c["id"])) or 0.0) + add.get(name, 0.0)
-                    vv[name] = n_games * per_game_var
-            proj.append(pv)
-            var.append(vv)
-        q = {}
-        for c in m.cats:
-            diff = m.sign[c] * (proj[0].get(c, 0.0) - proj[1].get(c, 0.0))
-            v = var[0].get(c, 0.0) + var[1].get(c, 0.0)
-            q[c] = _phi(diff / math.sqrt(v) / LAMBDA) if v > 1e-9 else (0.5 if abs(diff) < 1e-9 else float(diff > 0))
-        out[(sides[0]["teamId"], sides[1]["teamId"])] = (
-            p_majority(q.values()) if view.scoring_type == "H2H_MOST_CATEGORIES" else st.mean(q.values()))
+        a, b = (_side_projection(view, m, s, view.roster_entries(s["teamId"])) for s in sides)
+        out[(sides[0]["teamId"], sides[1]["teamId"])] = _pair_odds(view, m, a, b)[0]
     return out
+
+
+def matchup_odds(view: LeagueView, m: CategoryModel, raw: dict, team_id, wraps: list[dict] | None = None,
+                 windows: dict | None = None) -> dict | None:
+    """This matchup's odds for ``team_id`` with an optional changed roster (pickups and drops,
+    each with the days they count). None when the team has no matchup this period."""
+    g = view.find_matchup(raw, view.current_matchup_period, team_id)
+    if not g:
+        return None
+    me, opp, _ = view._side(g, team_id)
+    if not opp.get("teamId"):
+        return None
+    mine = _side_projection(view, m, me, wraps if wraps is not None else view.roster_entries(team_id), windows)
+    theirs = _side_projection(view, m, opp, view.roster_entries(opp["teamId"]))
+    win, q = _pair_odds(view, m, mine, theirs)
+    return {"win": win, "cats": q, "you": mine[0], "opp": theirs[0], "games": mine[2], "opp_games": theirs[2]}
 
 
 # ---- season outlook ------------------------------------------------------------------

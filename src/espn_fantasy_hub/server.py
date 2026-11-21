@@ -459,6 +459,20 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         return run(lambda h: h.add_player(league, add, drop, bid, confirm))
 
     @mcp.tool(annotations=READ_ONLY)
+    def streaming_options(
+        day: Annotated[int, Field(description="When the pickup joins: 0 = today (games not yet started), 1 = tomorrow, ...", ge=0, le=6)] = 0,
+        drop: Annotated[str | None, Field(description="Who to drop for the pickup (default: the rotation spot that costs least this week).")] = None,
+        prior_add: Annotated[str | None, Field(description="A pickup made today, applied before evaluating (e.g. today's add when planning tomorrow's).")] = None,
+        prior_drop: Annotated[str | None, Field(description="The player dropped for prior_add.")] = None,
+        top: Annotated[int, Field(ge=1, le=25)] = 10,
+        league: LeagueArg = None,
+    ) -> str:
+        """Basketball: rank free agents by how much they raise the odds of winning THIS
+        matchup (live categories + remaining games), with categories each one moves, games
+        left, and games next week. Read-only: use add_player to act."""
+        return run(lambda h: h.streaming_options(league, day, drop, prior_add, prior_drop, top))
+
+    @mcp.tool(annotations=READ_ONLY)
     def pending_claims(league: LeagueArg = None) -> str:
         """The user's waiver claims still waiting to process: who each adds and drops,
         the FAAB bid, when it was submitted, and its id (for cancel_claim)."""

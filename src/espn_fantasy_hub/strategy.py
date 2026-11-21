@@ -481,11 +481,14 @@ def _period_raw(side: dict) -> dict[str, float]:
     return totals
 
 
-def _remaining_production(view: LeagueView, wraps: list[dict]) -> tuple[dict[str, float], int, list[dict]]:
+def _remaining_production(view: LeagueView, wraps: list[dict],
+                          windows: dict | None = None) -> tuple[dict[str, float], int, list[dict]]:
     """Expected production from games not yet started through Sunday.
 
     Each day, the team is assumed to start its best available players with a
-    game (healthy, not on IR), up to its number of starting slots.
+    game (healthy, not on IR), up to its number of starting slots. ``windows``
+    ({player id: (first period, last period)}) limits when a player counts: a
+    pickup that joins tomorrow, or a player dropped after today's games.
     """
     from .views import end_of_week
 
@@ -503,6 +506,9 @@ def _remaining_production(view: LeagueView, wraps: list[dict]) -> tuple[dict[str
     for d in days:
         playing = []
         for w in pool:
+            win = (windows or {}).get(player_of(w).get("id"))
+            if win and not (win[0] <= d <= win[1]):
+                continue
             g = view.pro.game(player_of(w).get("proTeamId"), d)
             if g and (g["start"] is None or g["start"] > view.pro.now):
                 playing.append(w)

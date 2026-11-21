@@ -18,7 +18,7 @@ from . import analysis, catmodel, catseason, external, ffmodel, insights, intel,
 from .config import LeagueConfig, Settings
 from .discovery import discover
 from .espn import EspnError, LeagueClient, LeagueNotFound
-from .sports import BASKETBALL, FOOTBALL, SPORT_ALIASES, SPORTS, Sport
+from .sports import BASKETBALL, FOOTBALL, OUT_STATUSES, SPORT_ALIASES, SPORTS, Sport
 from .views import (
     BBALL_WINDOWS,
     LeagueView,
@@ -1105,6 +1105,134 @@ class Hub:
         tid = self._team(view, team)
         raw = h.client.scoreboard(view.current_matchup_period, view.scoring_period)
         return self._header(h, view) | {"period": view.period_label()} | strategy.matchup_projection(view, raw, tid)
+
+    def streaming_options(self, league=None, day: int = 0, drop: str | None = None,
+                          prior_add: str | None = None, prior_drop: str | None = None, top: int = 10) -> dict:
+        """Basketball: which pickup most raises the odds of winning THIS matchup, if added
+        ``day`` days from now (0 = today, games not yet started), dropping ``drop`` (or the
+        cheapest rotation spot). ``prior_add``/``prior_drop``: a move made today, applied first."""
+        from .strategy import season_value
+        from .views import end_of_week
+
+        h = self.resolve(league)
+        view = self.view(h)
+        if view.is_football or not view.is_categories:
+            raise UserError("streaming_options is for basketball category leagues.")
+        me = view.my_team_id
+        if me is None:
+            raise UserError("Couldn't identify your team in this league.")
+        season = self.category_season(h, view)
+        m = season.m
+        raw = h.client.scoreboard(view.current_matchup_period, view.scoring_period)
+        pool = h.client.player_pool(view.scoring_period, limit=150).get("players") or []
+        today = view.scoring_period
+        start = today + int(day)
+        last_day = max(view.pro.periods_between(view.pro.today, end_of_week(view.pro.today)) or [today])
+        if start > last_day:
+            raise UserError("This matchup ends before that day.")
+        BIG = 10 ** 6
+        roster = list(view.roster_entries(me))
+        windows: dict = {}
+
+        def on_roster(name):
+            try:
+                return writes.find_on_roster(view, roster, name)
+            except writes.MoveError as e:
+                raise UserError(str(e)) from None
+
+        def in_pool(name):
+            q = views_norm(name)
+            hits = [w for w in pool if views_norm(player_of(w).get("fullName") or "") == q]
+            if not hits:
+                hits = [w for w in pool if q in views_norm(player_of(w).get("fullName") or "")]
+            if len(hits) != 1:
+                raise UserError(f"Couldn't find exactly one available player matching {name!r}.")
+            return hits[0]
+
+        def free(w):
+            return not ppe_of(w).get("onTeamId")
+
+        def odds(wraps, win):
+            return catseason.matchup_odds(view, m, raw, me, wraps, win)
+
+        notes = []
+        if prior_add:
+            pw = in_pool(prior_add)
+            roster.append(pw)
+            windows[player_of(pw)["id"]] = (today, BIG)
+        if prior_drop:
+            windows[player_of(on_roster(prior_drop))["id"]] = (BIG, -BIG)
+        base = odds(roster, windows)
+        if base is None:
+            raise UserError("No matchup this period.")
+
+        def without(w):
+            win = dict(windows)
+            win[player_of(w)["id"]] = (-BIG, start - 1) if start > today else (BIG, -BIG)
+            return win
+
+        if drop:
+            drop_w = on_roster(drop)
+        else:
+            ranked = sorted((w for w in roster if w.get("lineupSlotId") != view.sport.ir_slot
+                             and player_of(w)["id"] not in {k for k, v in windows.items() if v[0] > v[1]}),
+                            key=lambda w: season_value(view, w) or -99, reverse=True)
+            options = [w for w in ranked[8:] if view._injury(w, player_of(w)) not in OUT_STATUSES]
+            if not options:
+                raise UserError("No rotation spot to drop; say who to drop.")
+            drop_w = max(options, key=lambda w: (round(odds(roster, without(w))["win"], 4), -(season_value(view, w) or 0)))
+            notes.append(f"Drop picked automatically: {player_of(drop_w).get('fullName')} (costs the least this week; "
+                         "never one of your top 8 or an injured player).")
+        dropped = odds(roster, without(drop_w))
+        cand_windows = without(drop_w)
+        next_mon = end_of_week(view.pro.today) + dt.timedelta(days=1)
+        next_days = view.pro.periods_between(next_mon, next_mon + dt.timedelta(days=6))
+        rows = []
+        for w in pool:
+            pl = player_of(w)
+            status = ppe_of(w).get("status")
+            if not free(w) or any(player_of(r)["id"] == pl["id"] for r in roster):
+                continue
+            if view._injury(w, pl) in OUT_STATUSES or (status == "WAIVERS" and start == today):
+                continue
+            games = [d for d in range(start, last_day + 1)
+                     if (g := view.pro.game(pl.get("proTeamId"), d)) and (g["start"] is None or g["start"] > view.pro.now)]
+            if not games:
+                continue
+            win = dict(cand_windows)
+            win[pl["id"]] = (start, BIG)
+            o = odds(roster + [w], win)
+            flips = [c for c in m.cats if (o["cats"][c] > 0.5) != (dropped["cats"][c] > 0.5)]
+            rows.append(compact({
+                "add": pl.get("fullName"), "team": h.sport.pro_team(pl.get("proTeamId")),
+                "status": "on waivers (claim)" if status == "WAIVERS" else None,
+                "injury": view._injury(w, pl) or None,
+                "games_this_matchup": len(games),
+                "win_pct": rnd(100 * o["win"], 1),
+                "gain_pct": rnd(100 * (o["win"] - base["win"]), 1),
+                "categories_moved": {c: f"{round(100 * dropped['cats'][c])}->{round(100 * o['cats'][c])}%"
+                                     for c in m.cats if abs(o["cats"][c] - dropped["cats"][c]) >= 0.03} or None,
+                "flips": flips or None,
+                "games_next_week": sum(1 for d in next_days if view.pro.game(pl.get("proTeamId"), d)),
+                "season_value": rnd(season_value(view, w), 2),
+            }))
+        rows.sort(key=lambda r: -r["win_pct"])
+        return self._header(h, view) | compact({
+            "team": view.team_label(me),
+            "pickup_day": str(view.pro.period_date.get(start)),
+            "drop": player_of(drop_w).get("fullName"),
+            "prior_move": (f"add {prior_add}" if prior_add else "") + (f", drop {prior_drop}" if prior_drop else "") or None,
+            "win_pct_now": rnd(100 * base["win"], 1),
+            "win_pct_after_drop_only": rnd(100 * dropped["win"], 1),
+            "category_odds_now": {c: round(100 * base["cats"][c]) for c in m.cats},
+            "best_pickups": rows[:top],
+            "drop_season_value": rnd(season_value(view, drop_w), 2),
+            "notes": notes + [
+                "Win % = chance to win this matchup: categories so far plus expected production of games not yet "
+                "started (season averages, best players each day up to your starting slots; positions ignored).",
+                "Daily pickup limits apply: one pickup today and one tomorrow at most in leagues with a 1-per-day limit.",
+            ],
+        })
 
     def waiver_upgrades(self, league=None, team=None) -> dict:
         h = self.resolve(league)
