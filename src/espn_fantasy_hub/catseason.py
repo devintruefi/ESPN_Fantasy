@@ -283,12 +283,12 @@ def rank_results(results: list[dict], top: int) -> list[dict]:
 
 # ---- the current matchup, from live category totals ---------------------------------------
 def _side_projection(view: LeagueView, m: CategoryModel, side: dict, wraps: list[dict],
-                     windows: dict | None = None) -> tuple[dict, dict, int]:
+                     windows: dict | None = None, split: int = 0) -> tuple[dict, dict, int]:
     """Projected end-of-matchup category values and their variance for one side."""
     from .strategy import RAW, _cat_values, _period_raw, _remaining_production
 
     tid = side["teamId"]
-    add, n_games, _ = _remaining_production(view, wraps, windows)
+    add, n_games, _ = _remaining_production(view, wraps, windows, split)
     cur, tot = _cat_values(side), _period_raw(side)
     act = [p for p in m.players if p["owner"] == tid and p["injury"] not in OUT_STATUSES] or m.players
     pv, vv = {}, {}
@@ -335,7 +335,7 @@ def live_probs(view: LeagueView, m: CategoryModel, raw: dict) -> dict[tuple[int,
 
 
 def matchup_odds(view: LeagueView, m: CategoryModel, raw: dict, team_id, wraps: list[dict] | None = None,
-                 windows: dict | None = None) -> dict | None:
+                 windows: dict | None = None, split: int = 0) -> dict | None:
     """This matchup's odds for ``team_id`` with an optional changed roster (pickups and drops,
     each with the days they count). None when the team has no matchup this period."""
     g = view.find_matchup(raw, view.current_matchup_period, team_id)
@@ -344,8 +344,8 @@ def matchup_odds(view: LeagueView, m: CategoryModel, raw: dict, team_id, wraps: 
     me, opp, _ = view._side(g, team_id)
     if not opp.get("teamId"):
         return None
-    mine = _side_projection(view, m, me, wraps if wraps is not None else view.roster_entries(team_id), windows)
-    theirs = _side_projection(view, m, opp, view.roster_entries(opp["teamId"]))
+    mine = _side_projection(view, m, me, wraps if wraps is not None else view.roster_entries(team_id), windows, split)
+    theirs = _side_projection(view, m, opp, view.roster_entries(opp["teamId"]), None, split)
     win, q = _pair_odds(view, m, mine, theirs)
     return {"win": win, "cats": q, "you": mine[0], "opp": theirs[0], "games": mine[2], "opp_games": theirs[2]}
 

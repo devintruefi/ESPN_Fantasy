@@ -239,3 +239,16 @@ def test_streaming_pickup_after_first_tip_plays_tomorrow(basketball_data):
     late_hub = make_hub([(cfg, basketball_data)], late_now)
     late = late_hub.streaming_options(day=0)
     assert late["pickup_plays_from"] == str(day + dt.timedelta(days=1))   # games started: next day
+
+
+def test_streaming_options_recent_form(basketball_data):
+    core = basketball_data["core"]
+    core["status"]["currentMatchupPeriod"] = 10
+    for m in core["schedule"]:
+        if m["matchupPeriodId"] >= 10:
+            m["winner"] = "UNDECIDED"
+    for m in basketball_data["scoreboard_10"]["schedule"]:
+        m["winner"] = "UNDECIDED"
+    hub, period = _in_season_hub(basketball_data, dt.date(2023, 1, 10))
+    out = hub.streaming_options(day=0, recent=True)
+    assert out["best_pickups"] and "last-15-day" in " ".join(out["notes"])

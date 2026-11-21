@@ -1107,7 +1107,8 @@ class Hub:
         return self._header(h, view) | {"period": view.period_label()} | strategy.matchup_projection(view, raw, tid)
 
     def streaming_options(self, league=None, day: int = 0, drop: str | None = None,
-                          prior_add: str | None = None, prior_drop: str | None = None, top: int = 10) -> dict:
+                          prior_add: str | None = None, prior_drop: str | None = None, top: int = 10,
+                          recent: bool = False) -> dict:
         """Basketball: which pickup most raises the odds of winning THIS matchup, if added
         ``day`` days from now (0 = today, games not yet started), dropping ``drop`` (or the
         cheapest rotation spot). ``prior_add``/``prior_drop``: a move made today, applied first."""
@@ -1155,8 +1156,10 @@ class Hub:
         def free(w):
             return not ppe_of(w).get("onTeamId")
 
+        split = 2 if recent else 0   # last 15 days
+
         def odds(wraps, win):
-            return catseason.matchup_odds(view, m, raw, me, wraps, win)
+            return catseason.matchup_odds(view, m, raw, me, wraps, win, split)
 
         notes = []
         if prior_add:   # made today: plays from the first day a pickup is active
@@ -1241,7 +1244,9 @@ class Hub:
             "drop_season_value": rnd(season_value(view, drop_w), 2),
             "notes": notes + [
                 "Win % = chance to win this matchup: categories so far plus expected production of games not yet "
-                "started (season averages, best players each day up to your starting slots; positions ignored).",
+                f"started ({'last-15-day' if recent else 'season'} averages for every player on both teams, best players "
+                "each day up to your starting slots; positions ignored). It doesn't know about minutes a pickup takes "
+                "from your own players on the same NBA team, or about matchups: check those.",
                 "Daily pickup limits apply: one pickup today and one tomorrow at most in leagues with a 1-per-day limit.",
             ],
         })

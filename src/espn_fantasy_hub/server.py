@@ -468,12 +468,13 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         prior_add: Annotated[str | None, Field(description="A pickup made today, applied before evaluating (e.g. today's add when planning tomorrow's).")] = None,
         prior_drop: Annotated[str | None, Field(description="The player dropped for prior_add.")] = None,
         top: Annotated[int, Field(ge=1, le=25)] = 10,
+        recent: Annotated[bool, Field(description="Project everyone from the last 15 days instead of the season (form, roles, minutes).")] = False,
         league: LeagueArg = None,
     ) -> str:
         """Basketball: rank free agents by how much they raise the odds of winning THIS
         matchup (live categories + remaining games), with categories each one moves, games
         left, and games next week. Read-only: use add_player to act."""
-        return run(lambda h: h.streaming_options(league, day, drop, prior_add, prior_drop, top))
+        return run(lambda h: h.streaming_options(league, day, drop, prior_add, prior_drop, top, recent))
 
     @mcp.tool(annotations=READ_ONLY)
     def pending_claims(league: LeagueArg = None) -> str:

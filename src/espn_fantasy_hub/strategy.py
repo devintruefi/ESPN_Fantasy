@@ -461,12 +461,20 @@ RAW = {"FGM": "13", "FGA": "14", "FTM": "15", "FTA": "16", "3PM": "17", "3PA": "
 RATIO_PARTS = {"FG%": ("FGM", "FGA"), "FT%": ("FTM", "FTA"), "3PT%": ("3PM", "3PA")}
 
 
-def _season_avgs(view: LeagueView, wrap: dict) -> dict[str, float]:
-    s = find_split(player_of(wrap), 0, 0, view.season) or {}
-    avg = s.get("averageStats") or {}
-    out = {view.sport.stat(k): (num(v) or 0.0) for k, v in avg.items()}
-    out["_fpts"] = num(s.get("appliedAverage")) or 0.0
-    return out
+def _season_avgs(view: LeagueView, wrap: dict, split: int = 0) -> dict[str, float]:
+    """Per-game averages: season (split 0) or recent form (basketball 1/2/3 = last 7/15/30 days,
+    falling back to the season when the player has no recent games)."""
+    def avgs(sp):
+        s = find_split(player_of(wrap), 0, sp, view.season) or {}
+        out = {view.sport.stat(k): (num(v) or 0.0) for k, v in (s.get("averageStats") or {}).items()}
+        out["_fpts"] = num(s.get("appliedAverage")) or 0.0
+        return out
+
+    if split:
+        recent = avgs(split)
+        if recent.get("GP"):
+            return recent
+    return avgs(0)
 
 
 def _period_raw(side: dict) -> dict[str, float]:
@@ -482,7 +490,7 @@ def _period_raw(side: dict) -> dict[str, float]:
 
 
 def _remaining_production(view: LeagueView, wraps: list[dict],
-                          windows: dict | None = None) -> tuple[dict[str, float], int, list[dict]]:
+                          windows: dict | None = None, split: int = 0) -> tuple[dict[str, float], int, list[dict]]:
     """Expected production from games not yet started through Sunday.
 
     Each day, the team is assumed to start its best available players with a
@@ -523,7 +531,7 @@ def _remaining_production(view: LeagueView, wraps: list[dict],
                 "sitting": [player_of(w).get("fullName") for w in playing[starters:]],
             })
         for w in used:
-            for k, v in _season_avgs(view, w).items():
+            for k, v in _season_avgs(view, w, split).items():
                 sums[k] = sums.get(k, 0.0) + v
     return sums, games_used, day_notes
 
