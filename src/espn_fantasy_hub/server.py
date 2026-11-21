@@ -443,12 +443,15 @@ def build_server(hub: Hub | None = None) -> FastMCP:
         bench: NamesArg = None,
         moves: Annotated[dict[str, str] | None, Field(description="Explicit placements: {player name: slot}, e.g. {'Josh Allen': 'QB', 'X': 'IR'}.")] = None,
         days_ahead: Annotated[int, Field(description="Basketball: 0 = today's lineup, 1 = tomorrow, ...", ge=0, le=7)] = 0,
+        auto: Annotated[bool, Field(description="Basketball: start every healthy player with a game that day (best by value, "
+                                                "position-legal); ignores start/bench/moves.")] = False,
         league: LeagueArg = None,
         confirm: ConfirmArg = False,
     ) -> str:
         """Change the user's lineup: start / bench players or put them in specific
-        slots. Preview first (confirm=false), then confirm=true after approval."""
-        return run(lambda h: h.set_lineup(league, start, bench, moves, days_ahead, confirm))
+        slots, or auto=true for the best basketball lineup of the day. Preview first
+        (confirm=false), then confirm=true after approval."""
+        return run(lambda h: h.set_lineup(league, start, bench, moves, days_ahead, confirm, auto))
 
     @mcp.tool(annotations=WRITE)
     def add_player(

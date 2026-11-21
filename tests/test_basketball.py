@@ -252,3 +252,40 @@ def test_streaming_options_recent_form(basketball_data):
     hub, period = _in_season_hub(basketball_data, dt.date(2023, 1, 10))
     out = hub.streaming_options(day=0, recent=True)
     assert out["best_pickups"] and "last-15-day" in " ".join(out["notes"])
+
+
+def test_auto_lineup_starts_everyone_who_plays(basketball_data, monkeypatch):
+    from espn_fantasy_hub import writes
+    day = dt.date(2023, 1, 10)
+    hub, period = _in_season_hub(basketball_data, day)
+    view = hub.view(hub.handles()[0])
+    entries = view.roster_entries(view.my_team_id)
+    plan, steps, warnings = writes.auto_lineup(view, entries, period, lambda w: 1.0)
+    new_slot = {player_of(e)["id"]: e["lineupSlotId"] for e in entries}
+    for pid, frm, to in plan:
+        new_slot[pid] = to
+    sport = view.sport
+    starters = [e for e in entries if sport.is_starting_slot(new_slot[player_of(e)["id"]])]
+    plays = lambda e: bool(view.pro.game(player_of(e).get("proTeamId"), period))
+    # every starter is in a slot he's eligible for, and slot counts hold
+    for e in starters:
+        assert new_slot[player_of(e)["id"]] in player_of(e)["eligibleSlots"]
+    for sid, cap in view.slot_counts.items():
+        if sport.is_starting_slot(sid):
+            assert sum(1 for v in new_slot.values() if v == sid) <= cap
+    # nobody healthy with a game sits while a starter without a game holds a slot he could take
+    for e in entries:
+        pid = player_of(e)["id"]
+        if sport.is_starting_slot(new_slot[pid]) or e["lineupSlotId"] == sport.ir_slot or not plays(e):
+            continue
+        if view._injury(e, player_of(e)) in ("OUT", "INJURY_RESERVE", "SUSPENSION"):
+            continue
+        for s in starters:
+            if not plays(s):
+                assert new_slot[player_of(s)["id"]] not in player_of(e)["eligibleSlots"], (player_of(e)["fullName"], player_of(s)["fullName"])
+
+
+def test_future_lineup_uses_future_roster_type():
+    from espn_fantasy_hub import writes
+    assert writes.lineup_payload(1, "{S}", 40, [(1, 12, 0)], future=True)["type"] == "FUTURE_ROSTER"
+    assert writes.lineup_payload(1, "{S}", 40, [(1, 12, 0)])["type"] == "ROSTER"

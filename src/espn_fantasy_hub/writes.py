@@ -49,9 +49,10 @@ def base_payload(team_id: int, swid: str, scoring_period: int) -> dict:
     }
 
 
-def lineup_payload(team_id, swid, scoring_period, moves: list[tuple[int, int, int]]) -> dict:
+def lineup_payload(team_id, swid, scoring_period, moves: list[tuple[int, int, int]], future: bool = False) -> dict:
+    """A lineup change; a later day than today is a FUTURE_ROSTER transaction (ESPN refuses ROSTER for it)."""
     return base_payload(team_id, swid, scoring_period) | {
-        "type": "ROSTER",
+        "type": "FUTURE_ROSTER" if future else "ROSTER",
         "items": [
             {"playerId": pid, "type": "LINEUP", "fromLineupSlotId": frm, "toLineupSlotId": to}
             for pid, frm, to in moves
@@ -261,6 +262,83 @@ def plan_lineup(
             warnings.append(f"{sport.slot(sid)} slot would be left empty.")
     if not result:
         raise MoveError("Nothing to change — that's already your lineup.")
+    return result, steps, warnings
+
+
+def auto_lineup(view: LeagueView, entries: list[dict], period: int, value, future: bool = False):
+    """Best lineup for one day: as many healthy players with a game as the slots allow, higher
+    value first, each in a slot he's eligible for. Locked players (game started) stay put.
+
+    Greedy by value with augmenting paths = a maximum-value matching of players to slots.
+    Returns (moves as (playerId, fromSlot, toSlot), steps, warnings) like plan_lineup."""
+    sport = view.sport
+    capacity = {sid: c for sid, c in view.slot_counts.items() if sport.is_starting_slot(sid)}
+    slots = [sid for sid, c in sorted(capacity.items()) for _ in range(c)]
+    by_id = {player_of(e)["id"]: e for e in entries}
+    original = {pid: e.get("lineupSlotId") for pid, e in by_id.items()}
+    locked = {pid for pid, e in by_id.items() if ppe_of(e).get("lineupLocked") and not future}
+
+    def plays(e):
+        p = player_of(e)
+        if e.get("lineupSlotId") == sport.ir_slot or view._injury(e, p) in OUT_STATUSES:
+            return False
+        g = view.pro.game(p.get("proTeamId"), period)
+        return bool(g) and (future or g["start"] is None or g["start"] > view.pro.now)
+
+    owner: dict[int, int] = {}            # slot index -> player id
+    # locked starters keep their slots
+    for pid in locked:
+        sid = original[pid]
+        if sport.is_starting_slot(sid):
+            i = next((k for k, s in enumerate(slots) if s == sid and k not in owner), None)
+            if i is not None:
+                owner[i] = pid
+    fixed = set(owner)
+
+    def eligible(pid):
+        el = set(player_of(by_id[pid]).get("eligibleSlots") or [])
+        return [k for k, s in enumerate(slots) if s in el and k not in fixed]
+
+    def augment(pid, seen):
+        for k in eligible(pid):
+            if k in seen:
+                continue
+            seen.add(k)
+            if k not in owner or augment(owner[k], seen):
+                owner[k] = pid
+                return True
+        return False
+
+    playing = sorted((pid for pid, e in by_id.items() if pid not in locked and plays(e)),
+                     key=lambda pid: value(by_id[pid]) or -99, reverse=True)
+    for pid in playing:
+        augment(pid, set())
+    assigned = {pid: slots[k] for k, pid in owner.items()}
+    # Fill leftover slots with players already there (no game either way), else leave empty.
+    for k, s in enumerate(slots):
+        if k in owner:
+            continue
+        keep = next((pid for pid, sid in original.items() if sid == s and pid not in assigned and pid not in locked
+                     and s in (player_of(by_id[pid]).get("eligibleSlots") or [])), None)
+        if keep is not None:
+            assigned[keep] = s
+            owner[k] = keep
+    result, steps, warnings = [], [], []
+    for pid, e in by_id.items():
+        if pid in locked or original[pid] == sport.ir_slot:
+            continue
+        new = assigned.get(pid, sport.bench_slot)
+        if new != original[pid]:
+            result.append((pid, original[pid], new))
+            steps.append(f"{player_of(e).get('fullName')}: {sport.slot(original[pid])} → {sport.slot(new)}")
+    benched_playing = [player_of(by_id[pid]).get("fullName") for pid in playing if pid not in assigned]
+    if benched_playing:
+        warnings.append("More players have games than slots fit; sitting: " + ", ".join(benched_playing))
+    empty = len(slots) - len(owner)
+    if empty:
+        warnings.append(f"{empty} starting slot(s) have nobody with a game.")
+    if not result:
+        raise MoveError("Nothing to change — every healthy player with a game is already starting.")
     return result, steps, warnings
 
 

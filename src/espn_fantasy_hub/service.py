@@ -1403,15 +1403,23 @@ class Hub:
 
     PREVIEW_NOTE = "PREVIEW ONLY — nothing was sent. Show this to the user; if they approve, call again with the same arguments and confirm=true."
 
-    def set_lineup(self, league=None, start=None, bench=None, moves=None, days_ahead: int = 0, confirm: bool = False) -> dict:
+    def set_lineup(self, league=None, start=None, bench=None, moves=None, days_ahead: int = 0, confirm: bool = False,
+                   auto: bool = False) -> dict:
         h, view, me = self._write_context(league)
         period = view.scoring_period
         entries = view.roster_entries(me)
         if days_ahead and not view.is_football:
             period += int(days_ahead)
             entries = view.roster_entries(me, h.client.roster_for_period(period))
+        future = period > view.scoring_period
         try:
-            plan, steps, warnings = writes.plan_lineup(view, entries, start, bench, moves, future=period > view.scoring_period)
+            if auto:
+                if view.is_football:
+                    raise writes.MoveError("auto lineups are for basketball days; use lineup_check's swaps for football.")
+                plan, steps, warnings = writes.auto_lineup(view, entries, period, lambda w: strategy.season_value(view, w),
+                                                           future=future)
+            else:
+                plan, steps, warnings = writes.plan_lineup(view, entries, start, bench, moves, future=future)
         except writes.MoveError as e:
             raise UserError(str(e)) from None
         when = f"Week {period}" if view.is_football else str(view.pro.period_date.get(period, f"scoring period {period}"))
@@ -1420,7 +1428,7 @@ class Hub:
             out["warnings"] = warnings
         if not confirm:
             return out | {"status": self.PREVIEW_NOTE}
-        result = self._submit(h, writes.lineup_payload(me, self.settings.swid, period, plan))
+        result = self._submit(h, writes.lineup_payload(me, self.settings.swid, period, plan, future=future))
         # verify by re-reading the lineup
         fresh = h.client.roster_for_period(period) if (days_ahead and not view.is_football) else None
         view2 = self.view(h)
