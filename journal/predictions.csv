@@ -12,3 +12,4 @@ made_on,league,kind,subject,prob,outcome,graded_on,note
 2026-11-17,BB,playoffs,2027 regular season,0.993,,,stress 0.771-0.990; record 4-0
 2026-11-17,BB,title,2027,0.423,,,stress 0.050-0.414
 2026-11-17,BB,move,trade team 8: give Ace Bailey; get Trae Young+Jrue Holiday (drop Jerami Grant),2.9,,,title +2.9..+6.0 pts; medium
+2026-11-23,BB,matchup,matchup 6 vs team 1,0.34,,,live categories + games left; projected 3-6
