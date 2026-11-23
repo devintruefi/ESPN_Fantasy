@@ -329,3 +329,17 @@ def test_position_limit_blocks_extra_center(basketball_hub):
     two_c = [{"defaultPositionId": 5}, {"defaultPositionId": 5}, {"defaultPositionId": 1}]
     assert view.over_position_limit(two_c) is None
     assert "at most 2" in view.over_position_limit(two_c + [{"defaultPositionId": 5}])
+
+
+def test_transactions_team_filter_and_long_window(basketball_hub):
+    out = basketball_hub.transactions(periods_back=40, team="1")
+    assert out["covering"] == "last 41 days"
+    assert all(r.get("team") == out["team"] or out["team"] in (r.get("gets") or {}) for r in out["transactions"])
+
+
+def test_lineup_history(basketball_hub):
+    out = small(basketball_hub.lineup_history(team="1", days_back=3))
+    assert out["starting_spots_per_day"] == 10
+    assert len(out["days"]) == 3
+    t = out["totals"]
+    assert t["games_started"] + t["unused_starting_spots"] == 10 * len(out["days"])

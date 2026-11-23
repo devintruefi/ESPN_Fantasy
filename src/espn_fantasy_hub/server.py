@@ -259,11 +259,24 @@ def build_server(hub: Hub | None = None) -> FastMCP:
     @mcp.tool(annotations=READ_ONLY)
     def recent_transactions(
         league: LeagueArg = None,
-        periods_back: Annotated[int | None, Field(description="Football: weeks back (default 1). Basketball: days back (default 6).", ge=0, le=14)] = None,
+        periods_back: Annotated[int | None, Field(description="Football: weeks back (default 1, up to 3). Basketball: days back (default 6, up to 60).", ge=0, le=60)] = None,
+        team: TeamArg = None,
     ) -> str:
         """Recent league activity: free-agent pickups, waiver claims (with FAAB
-        bids), trades and trade proposals visible to the user."""
-        return run(lambda h: h.transactions(league, periods_back))
+        bids), trades and trade proposals visible to the user. Pass a team to see only
+        that manager's moves (e.g. how an opponent streams)."""
+        return run(lambda h: h.transactions(league, periods_back, team))
+
+    @mcp.tool(annotations=READ_ONLY)
+    def lineup_history(
+        league: LeagueArg = None,
+        team: TeamArg = None,
+        days_back: Annotated[int, Field(description="Finished days to look back (basketball).", ge=1, le=60)] = 14,
+    ) -> str:
+        """Basketball: how a team's lineups were really set on past days: games started,
+        players who played while sitting on the bench, and starting spots that got no game.
+        Use it to scout how actively an opponent manages (and streams into) daily lineups."""
+        return run(lambda h: h.lineup_history(league, team, days_back))
 
     @mcp.tool(annotations=READ_ONLY)
     def draft_results(league: LeagueArg = None, team: TeamArg = None) -> str:

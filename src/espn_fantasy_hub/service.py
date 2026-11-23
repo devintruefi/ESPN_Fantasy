@@ -606,17 +606,78 @@ class Hub:
             if options:
                 issue["free_agent_options"] = options
 
-    def transactions(self, league=None, periods_back: int | None = None) -> dict:
+    def transactions(self, league=None, periods_back: int | None = None, team=None) -> dict:
         h = self.resolve(league)
         view = self.view(h)
         back = periods_back if periods_back is not None else (1 if view.is_football else 6)
-        back = max(0, min(int(back), 3 if view.is_football else 14))
+        back = max(0, min(int(back), 3 if view.is_football else 60))
         current = view.scoring_period
-        raws = [h.client.transactions(sp) for sp in range(current, max(0, current - back - 1), -1) if sp >= 1]
+        periods = [sp for sp in range(current, max(0, current - back - 1), -1) if sp >= 1]
+        with ThreadPoolExecutor(max_workers=8) as pool:  # one ESPN request per day: fetch in parallel
+            raws = list(pool.map(lambda sp: h.client.transactions(sp, final=sp < current), periods))
         ids = {it.get("playerId") for r in raws for tx in r.get("transactions") or [] for it in tx.get("items") or []}
         names = self._names(h, ids, view.final_scoring_period)
         span = f"weeks {max(1, current - back)}-{current}" if view.is_football else f"last {back + 1} days"
-        return self._header(h, view) | {"covering": span, "transactions": view.transactions(raws, names)}
+        rows = view.transactions(raws, names)
+        out = {"covering": span}
+        if team is not None:
+            label = view.team_label(self._team(view, team))
+            rows = [r for r in rows if r.get("team") == label or label in (r.get("gets") or {})]
+            out["team"] = label
+        return self._header(h, view) | out | {"transactions": rows}
+
+    def lineup_history(self, league=None, team=None, days_back: int = 14) -> dict:
+        """Basketball: how a team's daily lineups were actually set over past days (who started,
+        who sat on the bench while playing, starting slots that got no game)."""
+        h = self.resolve(league)
+        view = self.view(h)
+        if view.is_football:
+            raise UserError("lineup_history is for basketball (daily lineups).")
+        tid = self._team(view, team)
+        current = view.scoring_period
+        days_back = max(1, min(int(days_back), 60))
+        periods = [sp for sp in range(max(1, current - days_back), current)]  # finished days only
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            raws = list(pool.map(h.client.roster_for_period, periods))
+        sport = view.sport
+        slots = sum(n for sid, n in view.slot_counts.items() if sport.is_starting_slot(sid))
+        days, tot = [], {"games_started": 0, "games_left_on_bench": 0, "unused_starting_spots": 0}
+        for sp, raw in zip(periods, raws):
+            entries = view.roster_entries(tid, raw)
+            if not entries:
+                continue
+            started, benched, starters_no_game = [], [], 0
+            for e in entries:
+                pl = (e.get("playerPoolEntry") or {}).get("player") or {}
+                name = pl.get("fullName") or str(e.get("playerId"))
+                split = next((x for x in pl.get("stats") or [] if x.get("statSourceId") == 0
+                              and x.get("statSplitTypeId") == 5 and x.get("scoringPeriodId") == sp), None)
+                played = bool(split and (num((split.get("stats") or {}).get("40")) or 0) > 0)
+                sid = e.get("lineupSlotId")
+                if sport.is_starting_slot(sid):
+                    if played:
+                        started.append(name)
+                    else:
+                        starters_no_game += 1
+                elif sid == sport.bench_slot and played:
+                    benched.append(name)
+            unused = max(0, slots - len(started))
+            tot["games_started"] += len(started)
+            tot["games_left_on_bench"] += len(benched)
+            tot["unused_starting_spots"] += unused
+            date = view.pro.period_date.get(sp)
+            days.append(compact({"day": date.strftime("%a %b %d") if date else f"day {sp}", "started_games": len(started),
+                                 "played_on_bench": benched or None, "unused_starting_spots": unused,
+                                 "roster": len(entries)}))
+        return self._header(h, view) | {
+            "team": view.team_label(tid),
+            "covering": f"last {len(days)} finished days",
+            "starting_spots_per_day": slots,
+            "totals": tot,
+            "days": days,
+            "how_to_read": "played_on_bench = players who played that day but sat on the bench (lost games). "
+                           "unused_starting_spots = starting spots with nobody who played (no game, injury or empty).",
+        }
 
     def draft(self, league=None, team=None) -> dict:
         h = self.resolve(league)
