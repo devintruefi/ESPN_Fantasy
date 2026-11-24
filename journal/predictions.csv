@@ -1,15 +1,28 @@
 made_on,league,kind,subject,prob,outcome,graded_on,note
-2026-11-17,FB-A,matchup,week 11 vs team 1,0.83,,,projected 95.7-62.1
+2026-11-17,FB-A,matchup,week 11 vs team 1,0.83,0,2026-11-24,projected 95.7-62.1; lost 88.3-103.5 (was 39% by Sunday 11-22)
 2026-11-17,FB-A,playoffs,2026 regular season,0.668,,,stress 0.644-0.685; record 5-5
 2026-11-17,FB-A,title,2026,0.034,,,stress 0.027-0.042
-2026-11-17,FB-A,move,trade team 10: give Bijan Robinson+Trey McBride+Stefon Diggs; get Bhayshul Tuten+Tee Higgins+Chris Olave,3.7,,,playoffs +3.7..+4.1 pts; medium
-2026-11-17,FB-A,move,waiver: add Deshaun Watson; drop Alec Pierce,,,,not stress-tested; lineup +0.7..+2.3 pts/wk; low
-2026-11-17,FB-B,matchup,week 11 vs team 3,0.64,,,projected 115.3-105.2
+2026-11-17,FB-A,move,trade team 10: give Bijan Robinson+Trey McBride+Stefon Diggs; get Bhayshul Tuten+Tee Higgins+Chris Olave,3.7,skipped,2026-11-24,playoffs +3.7..+4.1 pts; medium; not made (all three still rostered); playoffs then fell 66.8->34.8 after the wk 11 loss
+2026-11-17,FB-A,move,waiver: add Deshaun Watson; drop Alec Pierce,,skipped,2026-11-24,not stress-tested; lineup +0.7..+2.3 pts/wk; low; Pierce was dropped for Chiefs D/ST and Cam Ward added at QB instead; Watson still available and still a top add
+2026-11-17,FB-B,matchup,week 11 vs team 3,0.64,1,2026-11-24,projected 115.3-105.2; won 109.2-94.1
 2026-11-17,FB-B,playoffs,2026 regular season,0.987,,,stress 0.972-0.993; record 6-4
 2026-11-17,FB-B,title,2026,0.271,,,stress 0.250-0.285
-2026-11-17,FB-B,move,trade team 9: give Josh Jacobs+Jordan Love; get Trey McBride,1.8,,,title +1.8..+9.3 pts; medium
-2026-11-17,BB,matchup,matchup 5 vs team 12,0.81,,,live categories + games left
+2026-11-17,FB-B,move,trade team 9: give Josh Jacobs+Jordan Love; get Trey McBride,1.8,skipped,2026-11-24,title +1.8..+9.3 pts; medium; not made; title odds 27.1->26.2 without it
+2026-11-17,BB,matchup,matchup 5 vs team 12,0.81,0,2026-11-24,live categories + games left; lost 3-6
 2026-11-17,BB,playoffs,2027 regular season,0.993,,,stress 0.771-0.990; record 4-0
 2026-11-17,BB,title,2027,0.423,,,stress 0.050-0.414
-2026-11-17,BB,move,trade team 8: give Ace Bailey; get Trae Young+Jrue Holiday (drop Jerami Grant),2.9,,,title +2.9..+6.0 pts; medium
+2026-11-17,BB,move,trade team 8: give Ace Bailey; get Trae Young+Jrue Holiday (drop Jerami Grant),2.9,skipped,2026-11-24,title +2.9..+6.0 pts; medium; not made (Ace Bailey still rostered); title odds 42.3->25.3 mostly from the matchup 5 loss and recent form
 2026-11-23,BB,matchup,matchup 6 vs team 1,0.34,,,live categories + games left; projected 3-6
+2026-11-24,FB-A,matchup,week 12 vs team 15,0.64,,,projected 110.7-99.8 (logged Tuesday; early-week projection)
+2026-11-24,FB-A,playoffs,2026 regular season,0.348,,,stress 0.312-0.360; record 5-6
+2026-11-24,FB-A,title,2026,0.011,,,stress 0.010-0.017
+2026-11-24,FB-A,move,trade team 10: give George Pickens+Trey McBride; get Tee Higgins+Luther Burden III,3.1,,,playoffs +3.1..+6.7 pts (trade_analyzer; all 5 stress tests); medium; also fixes the wk 14 double bye
+2026-11-24,FB-A,move,waiver: add Deshaun Watson; drop Rachaad White,,,,not stress-tested; lineup +1.6 pts/wk by projections / +0.6 by season averages; bid $10-13 of $73; low
+2026-11-24,FB-B,matchup,week 12 vs team 4,0.60,,,projected 121.1-114.4 (logged Tuesday)
+2026-11-24,FB-B,playoffs,2026 regular season,0.999,,,stress 0.996-0.999; record 7-4
+2026-11-24,FB-B,title,2026,0.262,,,stress 0.224-0.262
+2026-11-24,FB-B,move,trade team 9: give DeVonta Smith+Texans D/ST; get Trey McBride+Rashee Rice,2.4,,,title +2.4..+6.2 pts (trade_analyzer; all 5 stress tests); medium; needs a free-agent D/ST
+2026-11-24,BB,playoffs,2027 regular season,0.919,,,stress 0.407-0.919; record 4-1
+2026-11-24,BB,title,2027,0.253,,,stress 0.017-0.253
+2026-11-24,BB,move,trade team 6: give Julius Randle+Ace Bailey; get Bam Adebayo,0.4,,,title +0.4..+4.6 pts (trade_analyzer; all 5 stress tests); medium; frees a roster spot; TO +15.6 and STL +10.4 pts of category win %
+2026-11-24,BB,move,trade team 13: give Ace Bailey+Mo Bamba; get Cooper Flagg (alternative to the team 6 deal),0.1,,,title +0.1..+8.1 pts (trade_analyzer; all 5 stress tests); low-medium; costs BLK -16.8 and TO -9.2 pts of category win %
